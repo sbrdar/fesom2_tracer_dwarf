@@ -213,6 +213,7 @@ set(library_sources_Fortran
     ${lib_home}/analytic_mesh.F90
     ${lib_home}/mesh_output.F90
     ${lib_home}/tracer_init_from_mesh.F90
+    ${lib_home}/fesom_profiler.F90
 )
 
 # Add C interface source if enabled

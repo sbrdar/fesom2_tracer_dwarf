@@ -44,6 +44,7 @@ program tracer_dwarf_analytic
   use mesh_output_module
   use g_config
   use o_PARAM
+  use fesom_profiler
 #ifdef USE_HALF_PRECISION
   use hp_math_intrinsics
 #endif
@@ -159,6 +160,9 @@ program tracer_dwarf_analytic
   partit%MPI_COMM_FESOM = MPI_COMM_WORLD
   call par_init(partit)
 
+  ! Initialize profiler
+  call fesom_profiler_init()
+
   if (partit%mype == 0) then
     write(*, '(A)') ''
     write(*, '(A)') '================================================'
@@ -180,6 +184,7 @@ program tracer_dwarf_analytic
   ! ========================================
   ! Generate analytic mesh
   ! ========================================
+  call fesom_profiler_start("mesh_init")
   call generate_analytic_mesh(nx, ny, nl, Lx, Ly, max_depth, partit, mesh, periodic)
 
   ! ========================================
@@ -190,9 +195,12 @@ program tracer_dwarf_analytic
     call write_mesh_for_python(mesh, trim(output_dir))
   end if
 
+  call fesom_profiler_end("mesh_init")
+
   ! ========================================
   ! Initialize ALE arrays
   ! ========================================
+  call fesom_profiler_start("setup")
   if (partit%mype == 0) write(*, '(A)') '  --> Initializing ALE arrays'
 
   nz = mesh%nl - 1
@@ -363,6 +371,8 @@ program tracer_dwarf_analytic
     write(*, '(A)') ''
   end if
 
+  call fesom_profiler_end("setup")
+
   ! ========================================
   ! Run advection test
   ! ========================================
@@ -389,6 +399,8 @@ program tracer_dwarf_analytic
                            partit%myDim_nod2D)
   end if
 
+  call fesom_profiler_start("advection_loop")
+  call fesom_profiler_set_timesteps(nsteps)
   do istep = 1, nsteps
     do n = 1, tracers%num_tracers
       ! Zero advection tendencies before each tracer
@@ -447,6 +459,7 @@ program tracer_dwarf_analytic
   if (save_scalars .and. partit%mype == 0) then
     call close_scalar_output(scalar_units, tracers%num_tracers)
   end if
+  call fesom_profiler_end("advection_loop")
 
   if (partit%mype == 0) then
     write(*, '(A)') ''
@@ -457,8 +470,9 @@ program tracer_dwarf_analytic
   end if
 
   ! ========================================
-  ! Finalize MPI
+  ! Finalize profiler and MPI
   ! ========================================
+  call fesom_profiler_finalize(partit%MPI_COMM_FESOM, partit%mype)
   call par_ex(partit%MPI_COMM_FESOM, partit%mype)
 
   if (partit%mype == 0) then

@@ -8,9 +8,10 @@ module oce_adv_tra_driver_module
     use oce_adv_tra_hor_interfaces
     use oce_adv_tra_ver_interfaces
     use oce_adv_tra_fct_module, only: oce_tra_adv_fct
-    
+    use fesom_profiler
+
     implicit none
-    
+
     private
     public :: do_oce_adv_tra, oce_tra_adv_flux2dtracer
 
@@ -239,6 +240,7 @@ subroutine do_oce_adv_tra(dt, vel, w, wi, we, tr_num, dynamics, tracers, partit,
     if (trim(tracers%data(tr_num)%tra_adv_lim)=='FCT') do_zero_flux=.false.
     !___________________________________________________________________________
     ! do horizontal tracer advection, in case of FCT high order solution
+    call fesom_profiler_start("adv_tra_hor")
     SELECT CASE(trim(tracers%data(tr_num)%tra_adv_hor))
         CASE('MUSCL')
             ! compute the untidiffusive horizontal flux (o_init_zero=.false.: input is the LO horizontal flux computed above)
@@ -251,6 +253,7 @@ subroutine do_oce_adv_tra(dt, vel, w, wi, we, tr_num, dynamics, tracers, partit,
             if (partit%mype==0) write(*,*) 'Unknown horizontal advection type ',  trim(tracers%data(tr_num)%tra_adv_hor), '! Check your namelists!'
             call par_ex(partit%MPI_COMM_FESOM, partit%mype, 1)
     END SELECT
+    call fesom_profiler_end("adv_tra_hor")
     if (trim(tracers%data(tr_num)%tra_adv_lim)=='FCT') then
        pwvel=>w
     else
@@ -259,6 +262,7 @@ subroutine do_oce_adv_tra(dt, vel, w, wi, we, tr_num, dynamics, tracers, partit,
 
     !___________________________________________________________________________
     ! do vertical tracer advection, in case of FCT high order solution
+    call fesom_profiler_start("adv_tra_ver")
     SELECT CASE(trim(tracers%data(tr_num)%tra_adv_ver))
         CASE('QR4C')
             ! compute the untidiffusive vertical flux   (o_init_zero=.false.:input is the LO vertical flux computed above)
@@ -276,7 +280,8 @@ subroutine do_oce_adv_tra(dt, vel, w, wi, we, tr_num, dynamics, tracers, partit,
         !     oce_ale_tracer.F90 --> subroutine diff_ver_part_impl_ale(tr_num, partit, mesh)
         !     for do_wimpl=.true.
     END SELECT
-    
+    call fesom_profiler_end("adv_tra_ver")
+
     !___________________________________________________________________________
     if (trim(tracers%data(tr_num)%tra_adv_lim)=='FCT') then
        !edge_up_dn_grad will be used as an auxuary array here
