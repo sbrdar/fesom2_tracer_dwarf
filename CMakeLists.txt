@@ -5,6 +5,7 @@ include(fesom_setup)
 
 # Option to enable C interface for Python binding
 option(ENABLE_TRACER_C_INTERFACE "Build C interface for tracer library" OFF)
+option(ENABLE_ATLAS "Build with the Atlas backend" OFF)
 
 # Precision options (mutually exclusive)
 option(USE_HALF_PRECISION "Build with half precision (WP=2, FP16)" OFF)
@@ -18,6 +19,64 @@ option(ENABLE_NVTX "enable use of nvtx tools" OFF)
 
 # Find required packages
 find_package(MPI REQUIRED)
+
+if(ENABLE_ATLAS)
+    # First, try to find locally-built Atlas (overrides system installation)
+    set(ATLAS_DIR_FOUND FALSE)
+    foreach(compiler_variant gnu intel nvidia)
+        if(EXISTS "${CMAKE_SOURCE_DIR}/atlas_install_${compiler_variant}/lib/cmake/atlas/atlas-config.cmake")
+            set(atlas_DIR "${CMAKE_SOURCE_DIR}/atlas_install_${compiler_variant}/lib/cmake/atlas")
+            set(ATLAS_DIR_FOUND TRUE)
+            message(STATUS "Found local Atlas build: ${atlas_DIR}")
+            # Prepend local build to CMAKE_PREFIX_PATH to ensure it takes precedence
+            list(PREPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/atlas_install_${compiler_variant}")
+            break()
+        endif()
+    endforeach()
+
+    # Find Atlas (will use local build if CMAKE_PREFIX_PATH is set above)
+    find_package(atlas QUIET)
+    if(atlas_FOUND)
+        if(ATLAS_DIR_FOUND)
+            message(STATUS "Atlas backend enabled (local build)")
+        else()
+            message(STATUS "Atlas backend enabled")
+        endif()
+    else()
+        if(ATLAS_DIR_FOUND)
+            # Retry with explicit directory
+            find_package(atlas REQUIRED PATHS "${atlas_DIR}")
+            message(STATUS "Atlas backend enabled (local build)")
+        else()
+            message(FATAL_ERROR
+                "Atlas not found. To use --atlas:\n"
+                "  1. Run: ./build_atlas.sh gnu  (or your compiler)\n"
+                "  2. Then: ./configure.sh ... --atlas --build\n"
+                "\n"
+                "Alternatively, disable Atlas with the default configuration."
+            )
+        endif()
+    endif()
+
+    # Ensure runtime linker can resolve Atlas/eckit/fckit dylibs on macOS.
+    # Atlas config dir is usually <prefix>/lib/cmake/atlas, so ../.. is <prefix>/lib.
+    set(ATLAS_RUNTIME_LIBDIR "")
+    if(DEFINED atlas_DIR AND EXISTS "${atlas_DIR}")
+        get_filename_component(ATLAS_RUNTIME_LIBDIR "${atlas_DIR}/../.." REALPATH)
+    elseif(TARGET atlas_f)
+        get_target_property(_atlas_f_loc atlas_f IMPORTED_LOCATION_RELEASE)
+        if(NOT _atlas_f_loc)
+            get_target_property(_atlas_f_loc atlas_f IMPORTED_LOCATION)
+        endif()
+        if(_atlas_f_loc)
+            get_filename_component(ATLAS_RUNTIME_LIBDIR "${_atlas_f_loc}" DIRECTORY)
+        endif()
+    endif()
+
+    if(ATLAS_RUNTIME_LIBDIR)
+        message(STATUS "Atlas runtime lib dir: ${ATLAS_RUNTIME_LIBDIR}")
+    endif()
+endif()
 
 # Determine library directory - works for both standalone and integrated builds
 if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
@@ -211,6 +270,7 @@ set(library_sources_Fortran
     ${lib_home}/oce_adv_tra_ver.F90
     ${lib_home}/oce_adv_tra_driver.F90
     ${lib_home}/analytic_mesh.F90
+    ${lib_home}/atlas_fesom_mesh.F90
     ${lib_home}/mesh_output.F90
     ${lib_home}/tracer_init_from_mesh.F90
     ${lib_home}/fesom_profiler.F90
@@ -228,6 +288,26 @@ endif()
 add_library(${PROJECT_NAME}_Fortran SHARED ${library_sources_Fortran})
 apply_fesom_compile_flags(${PROJECT_NAME}_Fortran)
 target_link_libraries(${PROJECT_NAME}_Fortran PUBLIC MPI::MPI_Fortran)
+if(ENABLE_ATLAS)
+    target_compile_definitions(${PROJECT_NAME}_Fortran PRIVATE ENABLE_ATLAS)
+    target_link_libraries(${PROJECT_NAME}_Fortran PUBLIC atlas_f)
+    # On macOS, when using pre-built Atlas+eckit, the old MPICH 4.3.0 may appear
+    # in transitive dependencies. Force the system MPI to take precedence by:
+    # 1. Appending it to the link line (linked last wins)
+    # 2. Using explicit linker flags to prefer our MPI over the old version
+    if(APPLE)
+        get_target_property(MPI_LIBS MPI::MPI_Fortran INTERFACE_LINK_LIBRARIES)
+        target_link_libraries(${PROJECT_NAME}_Fortran PUBLIC "${MPI_LIBS}")
+        # Add explicit linker flag to use the system MPICH
+        target_link_options(${PROJECT_NAME}_Fortran BEFORE PRIVATE
+            "LINKER:-L/opt/homebrew/Cellar/mpich/5.0.1/lib")
+    endif()
+
+    if(ATLAS_RUNTIME_LIBDIR)
+        set_property(TARGET ${PROJECT_NAME}_Fortran APPEND PROPERTY BUILD_RPATH "${ATLAS_RUNTIME_LIBDIR}")
+        set_property(TARGET ${PROJECT_NAME}_Fortran APPEND PROPERTY INSTALL_RPATH "${ATLAS_RUNTIME_LIBDIR}")
+    endif()
+endif()
 set_target_properties(${PROJECT_NAME}_Fortran PROPERTIES LINKER_LANGUAGE Fortran)
 
 # OpenACC linker flags for NVHPC
@@ -248,6 +328,10 @@ add_executable(${PROJECT_NAME} ${CMAKE_CURRENT_SOURCE_DIR}/src/fesom.F90)
 apply_fesom_compile_flags(${PROJECT_NAME})
 target_link_libraries(${PROJECT_NAME} PUBLIC ${PROJECT_NAME}_Fortran)
 set_target_properties(${PROJECT_NAME} PROPERTIES LINKER_LANGUAGE Fortran)
+if(ENABLE_ATLAS AND ATLAS_RUNTIME_LIBDIR)
+    set_property(TARGET ${PROJECT_NAME} APPEND PROPERTY BUILD_RPATH "${ATLAS_RUNTIME_LIBDIR}")
+    set_property(TARGET ${PROJECT_NAME} APPEND PROPERTY INSTALL_RPATH "${ATLAS_RUNTIME_LIBDIR}")
+endif()
 
 # ========================================
 # Mesh-init executable
@@ -257,6 +341,10 @@ add_executable(${mesh_init_executable} ${CMAKE_CURRENT_SOURCE_DIR}/src/fesom_mes
 apply_fesom_compile_flags(${mesh_init_executable})
 target_link_libraries(${mesh_init_executable} PUBLIC ${PROJECT_NAME}_Fortran)
 set_target_properties(${mesh_init_executable} PROPERTIES LINKER_LANGUAGE Fortran)
+if(ENABLE_ATLAS AND ATLAS_RUNTIME_LIBDIR)
+    set_property(TARGET ${mesh_init_executable} APPEND PROPERTY BUILD_RPATH "${ATLAS_RUNTIME_LIBDIR}")
+    set_property(TARGET ${mesh_init_executable} APPEND PROPERTY INSTALL_RPATH "${ATLAS_RUNTIME_LIBDIR}")
+endif()
 
 # ========================================
 # Analytic mesh executable
@@ -266,6 +354,10 @@ add_executable(${analytic_executable} ${CMAKE_CURRENT_SOURCE_DIR}/src/fesom_anal
 apply_fesom_compile_flags(${analytic_executable})
 target_link_libraries(${analytic_executable} PUBLIC ${PROJECT_NAME}_Fortran)
 set_target_properties(${analytic_executable} PROPERTIES LINKER_LANGUAGE Fortran)
+if(ENABLE_ATLAS AND ATLAS_RUNTIME_LIBDIR)
+    set_property(TARGET ${analytic_executable} APPEND PROPERTY BUILD_RPATH "${ATLAS_RUNTIME_LIBDIR}")
+    set_property(TARGET ${analytic_executable} APPEND PROPERTY INSTALL_RPATH "${ATLAS_RUNTIME_LIBDIR}")
+endif()
 
 # OpenACC linker flags for executables (NVHPC)
 if(CMAKE_Fortran_COMPILER_ID STREQUAL "PGI" OR CMAKE_Fortran_COMPILER_ID STREQUAL "NVHPC")

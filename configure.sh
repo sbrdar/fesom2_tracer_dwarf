@@ -37,6 +37,7 @@ COMPILER="gnu"
 PRECISION="dp"
 BUILD_TYPE="Release"
 ENABLE_OPENACC="OFF"
+ENABLE_ATLAS="OFF"
 DO_CLEAN=false
 DO_BUILD=false
 
@@ -59,6 +60,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --openacc)
             ENABLE_OPENACC="ON"
+            shift
+            ;;
+        --atlas)
+            ENABLE_ATLAS="ON"
             shift
             ;;
         --clean)
@@ -174,6 +179,59 @@ fi
 BUILD_DIR="build_${COMPILER}_${PRECISION}"
 
 # ========================================
+# Handle Atlas: download and/or build from source
+# ========================================
+if [ "$ENABLE_ATLAS" = "ON" ]; then
+    ATLAS_DEPS_DIR="${SCRIPT_DIR}/atlas_deps"
+    ATLAS_INSTALL_DIR="${SCRIPT_DIR}/atlas_install_${COMPILER}"
+    ATLAS_CONFIG_DIR="${ATLAS_INSTALL_DIR}/lib/cmake/atlas"
+    ATLAS_CONFIG_FILE_1="${ATLAS_CONFIG_DIR}/atlas-config.cmake"
+    ATLAS_CONFIG_FILE_2="${ATLAS_CONFIG_DIR}/atlasConfig.cmake"
+
+    echo ""
+    echo "========================================="
+    echo "Atlas Configuration"
+    echo "========================================="
+
+    # Check if Atlas is already installed locally
+    if [ -f "${ATLAS_CONFIG_FILE_1}" ] || [ -f "${ATLAS_CONFIG_FILE_2}" ]; then
+        echo "Found locally-built Atlas at: $ATLAS_INSTALL_DIR"
+        CMAKE_EXTRA_ARGS="${CMAKE_EXTRA_ARGS} -Datlas_DIR=${ATLAS_CONFIG_DIR}"
+    else
+        # Download Atlas source if not present
+        if [ ! -d "${ATLAS_DEPS_DIR}/atlas" ]; then
+            echo "Downloading Atlas from GitHub..."
+            mkdir -p "${ATLAS_DEPS_DIR}"
+            git clone --depth 1 --branch master https://github.com/ecmwf/atlas.git "${ATLAS_DEPS_DIR}/atlas"
+            echo "Atlas source downloaded to: ${ATLAS_DEPS_DIR}/atlas"
+        else
+            echo "Atlas source found at: ${ATLAS_DEPS_DIR}/atlas"
+        fi
+
+        if [ ! -x "${SCRIPT_DIR}/build_atlas.sh" ]; then
+            echo "Error: ${SCRIPT_DIR}/build_atlas.sh not found or not executable"
+            echo "Cannot auto-build Atlas."
+            exit 1
+        fi
+
+        echo "Building Atlas from source (this can take a while)..."
+        BUILD_ATLAS_ARGS="--compiler $COMPILER"
+        if $DO_CLEAN; then
+            BUILD_ATLAS_ARGS="$BUILD_ATLAS_ARGS --clean"
+        fi
+        "${SCRIPT_DIR}/build_atlas.sh" $BUILD_ATLAS_ARGS
+
+        if [ -f "${ATLAS_CONFIG_FILE_1}" ] || [ -f "${ATLAS_CONFIG_FILE_2}" ]; then
+            echo "Atlas build complete and detected at: $ATLAS_INSTALL_DIR"
+            CMAKE_EXTRA_ARGS="${CMAKE_EXTRA_ARGS} -Datlas_DIR=${ATLAS_CONFIG_DIR}"
+        else
+            echo "Error: Atlas build finished but config was not found in ${ATLAS_CONFIG_DIR}"
+            exit 1
+        fi
+    fi
+fi
+
+# ========================================
 # Print configuration
 # ========================================
 echo ""
@@ -184,6 +242,7 @@ echo "  Compiler:    $COMPILER ($FC)"
 echo "  Precision:   $PRECISION"
 echo "  Build type:  $BUILD_TYPE"
 echo "  OpenACC:     $ENABLE_OPENACC"
+echo "  Atlas:       $ENABLE_ATLAS"
 echo "  Build dir:   $BUILD_DIR"
 echo "========================================="
 echo ""
@@ -209,6 +268,7 @@ cmake .. \
     -DUSE_SINGLE_PRECISION="$USE_SINGLE" \
     -DUSE_HALF_PRECISION="$USE_HALF" \
     -DENABLE_OPENACC="$ENABLE_OPENACC" \
+    -DENABLE_ATLAS="$ENABLE_ATLAS" \
     $CMAKE_EXTRA_ARGS
 
 echo ""
