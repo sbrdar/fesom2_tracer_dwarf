@@ -14,6 +14,11 @@ cd build_gnu_dp
 
 This generates a 20x20 doubly-periodic triangular mesh with 10 vertical levels and runs 10 advection steps on a single MPI rank.
 
+Atlas can be configure to be used in this dwarf
+```bash
+./configure.sh --compiler gnu --precision dp --clean --build --atlas
+```
+
 ## Running
 
 ### Analytic Dwarf (recommended for testing)
