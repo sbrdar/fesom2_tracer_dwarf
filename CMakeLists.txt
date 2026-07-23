@@ -332,6 +332,9 @@ if(ENABLE_ATLAS AND ATLAS_RUNTIME_LIBDIR)
     set_property(TARGET ${PROJECT_NAME} APPEND PROPERTY BUILD_RPATH "${ATLAS_RUNTIME_LIBDIR}")
     set_property(TARGET ${PROJECT_NAME} APPEND PROPERTY INSTALL_RPATH "${ATLAS_RUNTIME_LIBDIR}")
 endif()
+if(ENABLE_ATLAS)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_ATLAS)
+endif()
 
 # ========================================
 # Mesh-init executable
@@ -345,6 +348,9 @@ if(ENABLE_ATLAS AND ATLAS_RUNTIME_LIBDIR)
     set_property(TARGET ${mesh_init_executable} APPEND PROPERTY BUILD_RPATH "${ATLAS_RUNTIME_LIBDIR}")
     set_property(TARGET ${mesh_init_executable} APPEND PROPERTY INSTALL_RPATH "${ATLAS_RUNTIME_LIBDIR}")
 endif()
+if(ENABLE_ATLAS)
+    target_compile_definitions(${mesh_init_executable} PRIVATE ENABLE_ATLAS)
+endif()
 
 # ========================================
 # Analytic mesh executable
@@ -357,6 +363,9 @@ set_target_properties(${analytic_executable} PROPERTIES LINKER_LANGUAGE Fortran)
 if(ENABLE_ATLAS AND ATLAS_RUNTIME_LIBDIR)
     set_property(TARGET ${analytic_executable} APPEND PROPERTY BUILD_RPATH "${ATLAS_RUNTIME_LIBDIR}")
     set_property(TARGET ${analytic_executable} APPEND PROPERTY INSTALL_RPATH "${ATLAS_RUNTIME_LIBDIR}")
+endif()
+if(ENABLE_ATLAS)
+    target_compile_definitions(${analytic_executable} PRIVATE ENABLE_ATLAS)
 endif()
 
 # OpenACC linker flags for executables (NVHPC)

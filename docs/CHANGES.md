@@ -1,3 +1,16 @@
+# Unreleased
+
+## Added
+
+- Optional Atlas-backed mesh setup path controlled by `ENABLE_ATLAS_MESH`.
+- New mesh wrapper module `lib/atlas_fesom_mesh.F90` and integration into:
+	- `lib/tracer_init_from_mesh.F90`
+	- `lib/tracer_c_interface.F90`
+
+## Build
+
+- CMake now supports `-DENABLE_ATLAS_MESH=ON` and links `atlas_f` when enabled.
+
 # Changelog
 
 ## 2026-02-14 — Repository restructuring and dead code removal
