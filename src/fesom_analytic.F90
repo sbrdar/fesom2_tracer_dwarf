@@ -48,11 +48,24 @@ program tracer_dwarf_analytic
 #ifdef USE_HALF_PRECISION
   use hp_math_intrinsics
 #endif
+#ifdef ENABLE_ATLAS
+  use atlas_module
+  use atlas_fesom_mesh_module
+#endif
 
   implicit none
 
   type(t_partit) :: partit
   type(t_mesh)   :: mesh
+#ifdef ENABLE_ATLAS
+  type(atlas_StructuredGrid)   :: atlas_grid2
+  type(atlas_GridDistribution) :: atlas_distribution2
+  type(atlas_MeshGenerator)    :: atlas_meshgen2
+  type(atlas_Mesh)             :: atlas_mesh2
+  type(t_mesh)                 :: mesh3
+  integer, allocatable         :: atlas_part_array(:)
+  integer                      :: atlas_pe
+#endif
   type(t_dyn)    :: dynamics
   type(t_tracer) :: tracers
 
@@ -185,7 +198,51 @@ program tracer_dwarf_analytic
   ! Generate analytic mesh
   ! ========================================
   call fesom_profiler_start("mesh_init")
+#ifdef ENABLE_ATLAS
+  call atlas_initialize()
+  ! Step 1: populate mesh3 and partit (sets partit%part CSR offsets)
   call generate_analytic_mesh(nx, ny, nl, Lx, Ly, max_depth, partit, mesh, periodic)
+  print *, '  --> Analytic mesh generated: ', partit%part
+  ! Step 2: convert FESOM CSR part (size npes+1) to Atlas per-point rank array (size nx*ny)
+  !   FESOM: part(pe+1)..part(pe+2)-1 are the node indices owned by rank pe (1-based)
+  allocate(atlas_part_array(nx*ny))
+  print *, "atlas_part_array size: ", size(atlas_part_array)
+  print *, "npes size: ", partit%npes
+  atlas_part_array = partit%npes
+  do atlas_pe = 1, partit%npes
+    atlas_part_array(partit%part(atlas_pe) : partit%part(atlas_pe+1)) = atlas_pe
+  end do
+  print *, '  --> Atlas part array generated from FESOM partit: ', atlas_part_array
+  atlas_grid2         = atlas_RegularLonLatGrid(nx, ny)
+  atlas_distribution2 = atlas_GridDistribution(atlas_part_array, part0=1)
+  deallocate(atlas_part_array)
+  atlas_meshgen2      = atlas_MeshGenerator("structured")
+  atlas_mesh2         = atlas_meshgen2%generate(atlas_grid2, atlas_distribution2)
+
+  if (partit%mype == 0) then
+    write(*, '(A,I0,A,I0,A,I0)') &
+      '  --> Atlas mesh2 generated: RegularLonLat ', nx, ' x ', ny, &
+      ', nb_partitions = ', atlas_distribution2%nb_partitions()
+  end if
+  ! Convert atlas_mesh2 -> mesh3 (t_mesh); also fills partit arrays
+  deallocate(partit%part, partit%myList_nod2D, partit%myList_elem2D, partit%myList_edge2D)
+  deallocate(partit%com_nod2D%rlist);
+  deallocate(partit%com_nod2D%slist)
+  deallocate(partit%com_elem2D%rlist);
+  deallocate(partit%com_elem2D%slist)
+  deallocate(partit%com_elem2D_full%rlist);
+  deallocate(partit%com_elem2D_full%slist)
+  deallocate(partit%myInd_elem2D_shrinked)
+  call atlas_mesh_to_fesom_mesh(atlas_mesh2, nl, max_depth, partit, mesh3)
+  call atlas_mesh2%final()
+  call atlas_distribution2%final()
+  call atlas_meshgen2%final()
+  call atlas_grid2%final()
+  ! Use mesh3 for all downstream advection code
+  mesh = mesh3
+#else
+  call generate_analytic_mesh(nx, ny, nl, Lx, Ly, max_depth, partit, mesh, periodic)
+#endif
 
   ! ========================================
   ! Optional: save mesh for Python visualization

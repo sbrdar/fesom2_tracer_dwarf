@@ -10,7 +10,7 @@ module tracer_init_from_mesh_module
   use MOD_DYN
   use MOD_TRACER
   use MOD_PARSUP
-  use oce_mesh_module
+  use atlas_fesom_mesh_module, only: mesh_setup_with_atlas
   use oce_adv_tra_fct_module
   use oce_muscl_adv_module
   use o_PARAM
@@ -55,7 +55,7 @@ contains
     ! 2. Set up mesh from mesh files
     ! ========================================
     if (partit%mype == 0) write(output_unit, '(A)') '  --> Setting up mesh from files'
-    call mesh_setup(partit, mesh)
+    call mesh_setup_with_atlas(partit, mesh)
     
     if (partit%mype == 0) then
       write(output_unit, '(A,I8)') '      Mesh nl     = ', mesh%nl
