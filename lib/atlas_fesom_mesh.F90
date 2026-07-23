@@ -344,8 +344,13 @@ contains
     do n = 1, ncells; partit%myList_elem2D(n) = n; end do
     allocate(partit%myList_edge2D(edge2D_local))
     do n = 1, edge2D_local; partit%myList_edge2D(n) = n; end do
-    allocate(partit%part(2))
-    partit%part(1) = 1; partit%part(2) = nnodes + 1
+    ! CSR partition vector: size npes+1 with a balanced block distribution
+    allocate(partit%part(partit%npes+1))
+    partit%part(1) = 1
+    do n = 1, partit%npes
+      partit%part(n+1) = 1 + (n * nnodes) / partit%npes
+    end do
+    partit%part(partit%npes+1) = nnodes + 1
 
     ! Empty halo communication structures (npes=1: no halo exchange)
     partit%com_nod2D%rPEnum  = 0; partit%com_nod2D%sPEnum  = 0

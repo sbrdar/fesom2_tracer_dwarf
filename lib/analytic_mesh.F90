@@ -190,11 +190,12 @@ contains
     n_total_edges = n_horiz + n_vert + n_diag
 
     ! ========================================
-    ! 1b. Fill t_partit for npes=1
+    ! 1b. Fill t_partit (replicated mesh: every rank holds the full mesh)
     ! ========================================
     mesh%nod2D  = nod2D_local
     mesh%elem2D = elem2D_local
 
+    ! Every rank owns all nodes (replicated, no domain decomposition)
     partit%myDim_nod2D  = nod2D_local
     partit%eDim_nod2D   = eDim
 
@@ -206,7 +207,7 @@ contains
     partit%myDim_edge2D = n_total_edges
     partit%eDim_edge2D  = 0
 
-    ! Identity mapping lists
+    ! Identity mapping lists (full mesh on every rank)
     allocate(partit%myList_nod2D(nod2D_total))
     do n = 1, nod2D_total
       partit%myList_nod2D(n) = n
@@ -222,12 +223,22 @@ contains
       partit%myList_edge2D(n) = n
     end do
 
-    ! Partition vector for npes=1
-    allocate(partit%part(2))
+    ! Partition vector: CSR array of size npes+1
+    ! For a replicated mesh the standard interpretation is that rank pe owns
+    ! nodes part(pe+1)..part(pe+2)-1.  We distribute them evenly across ranks
+    ! so that part(npes+1)-1 == nod2D_total.  This satisfies the
+    ! oce_mesh.F90 check: mesh%nod2D == part(npes+1)-1.
+    allocate(partit%part(partit%npes+1))
     partit%part(1) = 1
-    partit%part(2) = nod2D_local + 1
+    do n = 1, partit%npes
+      ! floor(n * nod2D_total / npes) gives balanced block sizes
+      partit%part(n+1) = 1 + (n * nod2D_total) / partit%npes
+    end do
+    ! Guard: force correct endpoint (handles rounding edge cases)
+    partit%part(partit%npes+1) = nod2D_total + 1
 
-    ! Communication structures: no halo exchange needed for npes=1
+    ! Communication structures: no halo exchange needed for analytic mesh
+    ! (all nodes are generated locally on each rank)
     partit%com_nod2D%rPEnum = 0
     partit%com_nod2D%sPEnum = 0
     partit%com_elem2D%rPEnum = 0
@@ -243,7 +254,7 @@ contains
     allocate(partit%com_elem2D_full%rlist(0))
     allocate(partit%com_elem2D_full%slist(0))
 
-    ! Shrunk elem list for npes=1: all elements
+    ! Shrunk elem list: all elements
     partit%myDim_elem2D_shrinked = elem2D_local
     allocate(partit%myInd_elem2D_shrinked(elem2D_local))
     do n = 1, elem2D_local

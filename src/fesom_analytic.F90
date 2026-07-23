@@ -200,19 +200,21 @@ program tracer_dwarf_analytic
   call fesom_profiler_start("mesh_init")
 #ifdef ENABLE_ATLAS
   call atlas_initialize()
-  ! Step 1: populate mesh3 and partit (sets partit%part CSR offsets)
-  call generate_analytic_mesh(nx, ny, nl, Lx, Ly, max_depth, partit, mesh, periodic)
-  print *, '  --> Analytic mesh generated: ', partit%part
-  ! Step 2: convert FESOM CSR part (size npes+1) to Atlas per-point rank array (size nx*ny)
-  !   FESOM: part(pe+1)..part(pe+2)-1 are the node indices owned by rank pe (1-based)
+
+  ! Build the atlas per-point rank array directly from a balanced block
+  ! partition of the nx*ny atlas grid points.  For both boundary types
+  ! nod2D_total = nx*ny (periodic halos bring the total back up to nx*ny).
+  ! Calling generate_analytic_mesh here would trigger init_mpi_types which
+  ! would then be called a second time inside atlas_mesh_to_fesom_mesh,
+  ! causing a double-allocation of the MPI datatype arrays.
   allocate(atlas_part_array(nx*ny))
-  print *, "atlas_part_array size: ", size(atlas_part_array)
-  print *, "npes size: ", partit%npes
-  atlas_part_array = partit%npes
+  atlas_part_array = 0
   do atlas_pe = 1, partit%npes
-    atlas_part_array(partit%part(atlas_pe) : partit%part(atlas_pe+1)) = atlas_pe
+    ! CSR block: floor(k*N/P) gives balanced partition boundaries
+    atlas_part_array( 1 + (atlas_pe-1)*nx*ny/partit%npes &
+                    : (atlas_pe*nx*ny)/partit%npes ) = atlas_pe
   end do
-  print *, '  --> Atlas part array generated from FESOM partit: ', atlas_part_array
+
   atlas_grid2         = atlas_RegularLonLatGrid(nx, ny)
   atlas_distribution2 = atlas_GridDistribution(atlas_part_array, part0=1)
   deallocate(atlas_part_array)
@@ -224,15 +226,7 @@ program tracer_dwarf_analytic
       '  --> Atlas mesh2 generated: RegularLonLat ', nx, ' x ', ny, &
       ', nb_partitions = ', atlas_distribution2%nb_partitions()
   end if
-  ! Convert atlas_mesh2 -> mesh3 (t_mesh); also fills partit arrays
-  deallocate(partit%part, partit%myList_nod2D, partit%myList_elem2D, partit%myList_edge2D)
-  deallocate(partit%com_nod2D%rlist);
-  deallocate(partit%com_nod2D%slist)
-  deallocate(partit%com_elem2D%rlist);
-  deallocate(partit%com_elem2D%slist)
-  deallocate(partit%com_elem2D_full%rlist);
-  deallocate(partit%com_elem2D_full%slist)
-  deallocate(partit%myInd_elem2D_shrinked)
+  ! Convert atlas_mesh2 -> mesh3 (t_mesh); fills all partit arrays and calls init_mpi_types
   call atlas_mesh_to_fesom_mesh(atlas_mesh2, nl, max_depth, partit, mesh3)
   call atlas_mesh2%final()
   call atlas_distribution2%final()
