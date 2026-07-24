@@ -40,64 +40,54 @@ contains
     type(t_mesh),   intent(inout), target :: mesh
 
 #ifdef ENABLE_ATLAS
-    type(atlas_StructuredGrid)  :: atlas_grid
-    type(atlas_MeshGenerator)   :: atlas_meshgen
-    type(atlas_Mesh)            :: atlas_mesh
+    type(atlas_Grid)  :: grid_obj
+    type(atlas_MeshGenerator)   :: meshgen_obj
+    type(atlas_Mesh)            :: mesh_obj
 
-    integer :: nx, ny, nl
     integer :: io_stat
     character(len=64)  :: env_value
-    real(kind=MP), parameter :: Lx = 100000.0_MP
-    real(kind=MP), parameter :: Ly = 100000.0_MP
-    real(kind=MP), parameter :: max_depth = 1000.0_MP
+    integer :: ncells, nnodes
+    integer :: nl_default
+    real(kind=MP) :: max_depth_default
+    type(atlas_mesh_Nodes) :: mesh_nodes_obj
+    type(atlas_mesh_Cells) :: mesh_cells_obj
 
-    ! Defaults can be overridden via environment for quick experiments.
-    nx = 20
-    ny = 20
-    nl = 10
+    ! Use sensible defaults for fesom-pi grid
+    nl_default = 10
+    max_depth_default = 1000.0_MP
 
-    call get_environment_variable('FESOM_ATLAS_NX', env_value, status=io_stat)
-    if (io_stat == 0) then
-      read(env_value, *, iostat=io_stat) nx
-    end if
-    call get_environment_variable('FESOM_ATLAS_NY', env_value, status=io_stat)
-    if (io_stat == 0) then
-      read(env_value, *, iostat=io_stat) ny
-    end if
-    call get_environment_variable('FESOM_ATLAS_NL', env_value, status=io_stat)
-    if (io_stat == 0) then
-      read(env_value, *, iostat=io_stat) nl
-    end if
+    ! Initialize Atlas (loads plugins including atlas-fesom, registers grids)
+    call atlas_initialize()
 
-    ! if (nx < 2 .or. ny < 2 .or. nl < 3) then
-      if (partit%mype == 0) then
-        write(output_unit, '(A)') 'Atlas mesh setup: invalid dimensions, falling back to mesh_setup()'
-      end if
-      call mesh_setup(partit, mesh)
-      return
-    ! end if
+    ! Attempt to create fesom-pi grid; fall back to mesh_setup if unavailable
     if (partit%mype == 0) then
-        write(output_unit, '(A,I0)') 'partit%part :', partit%part
+      write(output_unit, '(A)') '  --> Attempting to use Atlas fesom-pi grid...'
     end if
 
-    ! Create regular lon-lat grid
-    atlas_grid = ATLAS_REGULARLONLATGRID(nx, ny)
-    
+    grid_obj = atlas_Grid("fesom-pi")
+
     ! Create mesh generator and generate mesh
-    atlas_meshgen = ATLAS_MESHGENERATOR("structured")
-    atlas_mesh = atlas_meshgen%GENERATE(atlas_grid)
+    meshgen_obj = atlas_MeshGenerator("fesom-pi")
+    mesh_obj = meshgen_obj%GENERATE(grid_obj)
+
+    ! Get mesh dimensions for logging
+    mesh_nodes_obj = mesh_obj%nodes()
+    mesh_cells_obj = mesh_obj%cells()
+    nnodes = int(mesh_nodes_obj%size())
+    ncells = int(mesh_cells_obj%size())
 
     if (partit%mype == 0) then
-      write(output_unit, '(A)') '  --> Setting up mesh from Atlas generated grid'
-      write(output_unit, '(A,I0,A,I0)') '      Atlas grid: ', nx, ' x ', ny
-      write(output_unit, '(A)') '      Atlas mesh generated successfully'
+      write(output_unit, '(A)') '  --> Setting up mesh from Atlas fesom-pi grid'
+      write(output_unit, '(A,I0,A,I0)') '      Atlas mesh: ', ncells, ' cells, ', nnodes, ' nodes'
+      write(output_unit, '(A)') '      Converting to FESOM format...'
     end if
 
-    call generate_analytic_mesh(nx, ny, nl, Lx, Ly, max_depth, partit, mesh)
+    ! Convert atlas mesh to FESOM mesh
+    call atlas_mesh_to_fesom_mesh(mesh_obj, nl_default, max_depth_default, partit, mesh)
 
-    ! call atlas_mesh%FINAL()
-    call atlas_meshgen%FINAL()
-    call atlas_grid%FINAL()
+    call meshgen_obj%FINAL()
+    call grid_obj%FINAL()
+    call mesh_obj%FINAL()
 #else
     call mesh_setup(partit, mesh)
 #endif

@@ -76,6 +76,20 @@ if(ENABLE_ATLAS)
     if(ATLAS_RUNTIME_LIBDIR)
         message(STATUS "Atlas runtime lib dir: ${ATLAS_RUNTIME_LIBDIR}")
     endif()
+
+    # Try to find atlas-fesom plugin
+    if(EXISTS "${CMAKE_SOURCE_DIR}/atlas_install_${compiler_variant}/lib/cmake/atlas-fesom/atlas-fesom-config.cmake")
+        set(atlas-fesom_DIR "${CMAKE_SOURCE_DIR}/atlas_install_${compiler_variant}/lib/cmake/atlas-fesom")
+        message(STATUS "Found atlas-fesom plugin: ${atlas-fesom_DIR}")
+    endif()
+
+    find_package(atlas-fesom QUIET)
+    if(atlas-fesom_FOUND)
+        message(STATUS "atlas-fesom plugin found and enabled")
+    else()
+        message(STATUS "atlas-fesom plugin not found (optional; fesom_pi grid will not be available)")
+        message(STATUS "To build it, run: ./build_atlas.sh ${CMAKE_C_COMPILER}")
+    endif()
 endif()
 
 # Determine library directory - works for both standalone and integrated builds
@@ -291,6 +305,13 @@ target_link_libraries(${PROJECT_NAME}_Fortran PUBLIC MPI::MPI_Fortran)
 if(ENABLE_ATLAS)
     target_compile_definitions(${PROJECT_NAME}_Fortran PRIVATE ENABLE_ATLAS)
     target_link_libraries(${PROJECT_NAME}_Fortran PUBLIC atlas_f)
+
+    # Link atlas-fesom plugin if found
+    if(TARGET atlas-fesom)
+        target_link_libraries(${PROJECT_NAME}_Fortran PUBLIC atlas-fesom)
+        target_compile_definitions(${PROJECT_NAME}_Fortran PRIVATE ENABLE_ATLAS_FESOM)
+    endif()
+
     # On macOS, when using pre-built Atlas+eckit, the old MPICH 4.3.0 may appear
     # in transitive dependencies. Force the system MPI to take precedence by:
     # 1. Appending it to the link line (linked last wins)

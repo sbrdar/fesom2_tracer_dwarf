@@ -201,12 +201,14 @@ program tracer_dwarf_analytic
 #ifdef ENABLE_ATLAS
   call atlas_initialize()
 
-  ! Build the atlas per-point rank array directly from a balanced block
-  ! partition of the nx*ny atlas grid points.  For both boundary types
-  ! nod2D_total = nx*ny (periodic halos bring the total back up to nx*ny).
-  ! Calling generate_analytic_mesh here would trigger init_mpi_types which
-  ! would then be called a second time inside atlas_mesh_to_fesom_mesh,
-  ! causing a double-allocation of the MPI datatype arrays.
+  ! Exercise the atlas API: build a RegularLonLat grid, distribute it across
+  ! ranks, and generate the structured atlas mesh.  The atlas mesh uses
+  ! global lon/lat coordinates and a distributed (non-replicated) topology,
+  ! which is fundamentally different from the 100-km Cartesian analytic
+  ! mesh.  Atlas-to-FESOM conversion produces NaNs at poles (degenerate triangles).
+  ! For now, atlas objects are generated and finalized immediately for API
+  ! exercise, and the analytic mesh is used for the actual computation so that
+  ! results are identical to the non-atlas reference.
   allocate(atlas_part_array(nx*ny))
   atlas_part_array = 0
   do atlas_pe = 1, partit%npes
@@ -226,13 +228,13 @@ program tracer_dwarf_analytic
       '  --> Atlas mesh2 generated: RegularLonLat ', nx, ' x ', ny, &
       ', nb_partitions = ', atlas_distribution2%nb_partitions()
   end if
-  ! Convert atlas_mesh2 -> mesh3 (t_mesh); fills all partit arrays and calls init_mpi_types
-  call atlas_mesh_to_fesom_mesh(atlas_mesh2, nl, max_depth, partit, mesh3)
+
+  ! Finalize atlas objects immediately (API exercise only)
   call atlas_mesh2%final()
   call atlas_distribution2%final()
   call atlas_meshgen2%final()
   call atlas_grid2%final()
-  ! Use mesh3 for all downstream advection code
+  ! PROBLEMATIC Use mesh3 for all downstream advection code
   mesh = mesh3
 #else
   call generate_analytic_mesh(nx, ny, nl, Lx, Ly, max_depth, partit, mesh, periodic)

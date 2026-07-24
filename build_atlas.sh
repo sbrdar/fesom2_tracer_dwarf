@@ -266,6 +266,47 @@ make -j"$JOBS" 2>&1 | tail -10
 echo "Installing..."
 make install 2>&1 | tail -5
 
+# ========================================
+# 6. Build atlas-fesom plugin
+# ========================================
+echo ""
+echo "========================================="
+echo "Building atlas-fesom plugin..."
+echo "========================================="
+
+# Clone atlas-fesom if not already present
+FESOM_PLUGIN_SOURCE="${DEPS_DIR}/atlas-fesom"
+if [ ! -d "$FESOM_PLUGIN_SOURCE" ]; then
+    echo "Cloning atlas-fesom from GitHub..."
+    git clone https://github.com/ecmwf/atlas-fesom.git "$FESOM_PLUGIN_SOURCE" 2>&1 | tail -5
+else
+    echo "atlas-fesom source already present"
+fi
+
+FESOM_PLUGIN_BUILD="${BUILD_BASE}/atlas-fesom"
+mkdir -p "$FESOM_PLUGIN_BUILD"
+cd "$FESOM_PLUGIN_BUILD"
+
+if ! [ -f CMakeCache.txt ]; then
+    cmake "$FESOM_PLUGIN_SOURCE" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX" \
+        -DCMAKE_Fortran_COMPILER="$FC" \
+        -DCMAKE_C_COMPILER="$CC" \
+        -DCMAKE_CXX_COMPILER="$CXX" \
+        -DCMAKE_PREFIX_PATH="$INSTALL_PREFIX" \
+        -Decbuild_DIR="$INSTALL_PREFIX/lib/cmake/ecbuild" \
+        -Datlas_DIR="$INSTALL_PREFIX/lib/cmake/atlas" \
+        -DENABLE_TESTS=OFF \
+        -DENABLE_DOCS=OFF \
+        2>&1 | tail -20
+fi
+
+echo "Building..."
+make -j"$JOBS" 2>&1 | tail -10
+echo "Installing..."
+make install 2>&1 | tail -5
+
 echo ""
 echo "========================================="
 echo "Build complete!"
