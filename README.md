@@ -67,7 +67,9 @@ Step    2: T min, max, sum =   0.322013E-01  0.199642E+02  0.3249000000E+05  NaN
 
 ### Mesh-Init Dwarf
 
-Reads mesh partition files (not restart files) and sets custom tracer values before advection. Requires pre-partitioned mesh files.
+Reads global mesh files (not restart files) and sets custom tracer values before
+advection. A single-rank run derives identity ownership from the global mesh;
+multi-rank runs require matching `dist_N/` partition files.
 
 ```bash
 mpirun -np 1 ./bin/fesom_tracer_mesh_init
