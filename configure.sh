@@ -14,8 +14,8 @@
 #   --build               Also run make after configuring
 #   --help                Show this help
 #
-# Build directories are named: build_<compiler>_<precision>
-# e.g. build_gnu_dp, build_intel_sp, build_nvidia_dp
+# Build directories are named: build_<compiler>_<precision>[_atlas]
+# e.g. build_gnu_dp, build_intel_sp, build_nvidia_dp_atlas
 #
 # Examples:
 #   ./configure.sh                                  # GNU double precision
@@ -177,6 +177,9 @@ fi
 
 # Build directory
 BUILD_DIR="build_${COMPILER}_${PRECISION}"
+if [ "$ENABLE_ATLAS" = "ON" ]; then
+    BUILD_DIR="${BUILD_DIR}_atlas"
+fi
 
 # ========================================
 # Handle Atlas: download and/or build from source
