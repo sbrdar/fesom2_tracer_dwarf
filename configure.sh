@@ -185,11 +185,14 @@ fi
 # Handle Atlas: download and/or build from source
 # ========================================
 if [ "$ENABLE_ATLAS" = "ON" ]; then
-    ATLAS_DEPS_DIR="${SCRIPT_DIR}/atlas_deps"
     ATLAS_INSTALL_DIR="${SCRIPT_DIR}/atlas_install_${COMPILER}"
     ATLAS_CONFIG_DIR="${ATLAS_INSTALL_DIR}/lib/cmake/atlas"
     ATLAS_CONFIG_FILE_1="${ATLAS_CONFIG_DIR}/atlas-config.cmake"
     ATLAS_CONFIG_FILE_2="${ATLAS_CONFIG_DIR}/atlasConfig.cmake"
+    ATLAS_FESOM_DATA_URL="https://sites.ecmwf.int/repository/atlas/grids/fesom/v0/fesom-pi.atlas"
+    ATLAS_FESOM_DATA_DIR="${ATLAS_INSTALL_DIR}/share/atlas/grids/fesom/v0"
+    ATLAS_FESOM_DATA_FILE="${ATLAS_FESOM_DATA_DIR}/fesom-pi.atlas"
+    export ATLAS_FESOM_CACHING=1
 
     echo ""
     echo "========================================="
@@ -201,16 +204,6 @@ if [ "$ENABLE_ATLAS" = "ON" ]; then
         echo "Found locally-built Atlas at: $ATLAS_INSTALL_DIR"
         CMAKE_EXTRA_ARGS="${CMAKE_EXTRA_ARGS} -Datlas_DIR=${ATLAS_CONFIG_DIR}"
     else
-        # Download Atlas source if not present
-        if [ ! -d "${ATLAS_DEPS_DIR}/atlas" ]; then
-            echo "Downloading Atlas from GitHub..."
-            mkdir -p "${ATLAS_DEPS_DIR}"
-            git clone --depth 1 --branch master https://github.com/ecmwf/atlas.git "${ATLAS_DEPS_DIR}/atlas"
-            echo "Atlas source downloaded to: ${ATLAS_DEPS_DIR}/atlas"
-        else
-            echo "Atlas source found at: ${ATLAS_DEPS_DIR}/atlas"
-        fi
-
         if [ ! -x "${SCRIPT_DIR}/build_atlas.sh" ]; then
             echo "Error: ${SCRIPT_DIR}/build_atlas.sh not found or not executable"
             echo "Cannot auto-build Atlas."
@@ -231,6 +224,23 @@ if [ "$ENABLE_ATLAS" = "ON" ]; then
             echo "Error: Atlas build finished but config was not found in ${ATLAS_CONFIG_DIR}"
             exit 1
         fi
+    fi
+
+    if [ ! -s "${ATLAS_FESOM_DATA_FILE}" ]; then
+        if ! command -v curl >/dev/null 2>&1; then
+            echo "Error: curl is required to download fesom-pi.atlas"
+            exit 1
+        fi
+        echo "Downloading fesom-pi.atlas..."
+        mkdir -p "${ATLAS_FESOM_DATA_DIR}"
+        rm -f "${ATLAS_FESOM_DATA_FILE}.tmp"
+        curl --fail --location --retry 3 \
+            --output "${ATLAS_FESOM_DATA_FILE}.tmp" \
+            "${ATLAS_FESOM_DATA_URL}"
+        mv "${ATLAS_FESOM_DATA_FILE}.tmp" "${ATLAS_FESOM_DATA_FILE}"
+        echo "Installed fesom-pi.atlas at: ${ATLAS_FESOM_DATA_FILE}"
+    else
+        echo "Found fesom-pi.atlas at: ${ATLAS_FESOM_DATA_FILE}"
     fi
 fi
 
@@ -323,6 +333,9 @@ cat > run.sh <<RUNEOF
 #   ./run.sh 1 50 50 10 --save-mesh --save-scalars --periodic
 
 set -e
+if [ "$ENABLE_ATLAS" = "ON" ]; then
+    export ATLAS_FESOM_CACHING=1
+fi
 if [ \$# -lt 1 ]; then
     echo "Usage: ./run.sh NP [program-args...]"
     echo "  NP = number of MPI processes"

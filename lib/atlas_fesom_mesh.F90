@@ -9,11 +9,12 @@
 module atlas_fesom_mesh_module
   use MOD_MESH
   use MOD_PARTIT
-  use o_PARAM, only: MP
+  use o_PARAM, only: WP, MP
   use oce_mesh_module, only: mesh_setup, test_tri, find_levels_min_e2n, &
                               mesh_areas, mesh_auxiliary_arrays
   use analytic_mesh_module, only: generate_analytic_mesh
-  use g_rotate_grid, only: set_mesh_transform_matrix
+  use g_config, only: force_rotation
+  use g_rotate_grid, only: set_mesh_transform_matrix, g2r
   use par_support_interfaces, only: init_mpi_types, init_gatherLists
   use iso_fortran_env, only: output_unit
 
@@ -120,7 +121,7 @@ contains
     type(atlas_Field)                  :: atlas_field
     type(atlas_MultiBlockConnectivity) :: atlas_conn
     real(c_double), pointer            :: lonlat(:,:)        ! (2, nnodes) degrees
-    integer(ATLAS_KIND_IDX), pointer   :: conn_padded(:,:)   ! (3, ncells)  0-based
+    integer(ATLAS_KIND_IDX), pointer   :: conn_padded(:,:)   ! (3, ncells)  1-based
     integer(ATLAS_KIND_IDX), pointer   :: conn_ncols(:)      ! (ncells)
 
     ! Mesh dimensions
@@ -137,6 +138,7 @@ contains
     integer, allocatable :: edge_perm(:), aux(:)
     integer :: e, n, k, q, e1
     integer :: elnodes(3), eledges(3)
+    real(kind=WP) :: geographic_lon, geographic_lat, rotated_lon, rotated_lat
 
     real(MP), parameter :: deg2rad = acos(-1.0_MP) / 180.0_MP
 
@@ -160,23 +162,32 @@ contains
     call atlas_field%data(lonlat)   ! lonlat(1,n)=lon, lonlat(2,n)=lat [degrees]
     mesh3%nod2D = nnodes
     allocate(mesh3%coord_nod2D(2, nnodes))
+    call set_mesh_transform_matrix()
     do n = 1, nnodes
-      mesh3%coord_nod2D(1, n) = real(lonlat(1, n), MP) * deg2rad
-      mesh3%coord_nod2D(2, n) = real(lonlat(2, n), MP) * deg2rad
+      geographic_lon = real(real(lonlat(1, n), MP) * deg2rad, WP)
+      geographic_lat = real(real(lonlat(2, n), MP) * deg2rad, WP)
+      if (force_rotation) then
+        call g2r(geographic_lon, geographic_lat, rotated_lon, rotated_lat)
+        mesh3%coord_nod2D(1, n) = real(rotated_lon, MP)
+        mesh3%coord_nod2D(2, n) = real(rotated_lat, MP)
+      else
+        mesh3%coord_nod2D(1, n) = real(geographic_lon, MP)
+        mesh3%coord_nod2D(2, n) = real(geographic_lat, MP)
+      end if
     end do
     call atlas_field%final()
 
     ! ------------------------------------------------------------------
-    ! 3. Cell connectivity: 0-based Atlas indices -> 1-based elem2D_nodes
+    ! 3. Cell connectivity: Atlas Fortran indices are already 1-based
     ! ------------------------------------------------------------------
     atlas_conn = atlas_cells%node_connectivity()
     call atlas_conn%padded_data(conn_padded, conn_ncols)
-    ! conn_padded(k, e): k-th node of element e, 0-based; shape (3, ncells)
+    ! conn_padded(k, e): k-th node of element e, 1-based; shape (3, ncells)
     mesh3%elem2D = ncells
     allocate(mesh3%elem2D_nodes(3, ncells))
     do e = 1, ncells
       do k = 1, 3
-        mesh3%elem2D_nodes(k, e) = int(conn_padded(k, e)) + 1
+        mesh3%elem2D_nodes(k, e) = int(conn_padded(k, e))
       end do
     end do
 
@@ -402,7 +413,6 @@ contains
     ! ------------------------------------------------------------------
     ! 10. Mesh computation routines
     ! ------------------------------------------------------------------
-    call set_mesh_transform_matrix()
     call init_mpi_types(partit, mesh3)
     call init_gatherLists(partit)
     call test_tri(partit, mesh3)

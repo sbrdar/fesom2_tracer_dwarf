@@ -24,7 +24,9 @@ Build the Atlas dependencies, then configure the dwarf with Atlas enabled:
 `build_atlas.sh` selects Atlas branch
 `fix/fortran-unstructured-grid-by-id`. Existing Atlas source checkouts must be
 clean so the script can switch branches and fast-forward without overwriting
-local work.
+local work. With `--atlas`, `configure.sh` also downloads `fesom-pi.atlas` into
+the local Atlas installation and enables atlas-fesom caching in the generated
+run wrapper.
 
 ## Running
 

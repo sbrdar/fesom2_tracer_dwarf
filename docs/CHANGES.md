@@ -11,6 +11,13 @@
 
 - CMake now supports `-DENABLE_ATLAS_MESH=ON` and links `atlas_f` when enabled.
 
+## Fixed
+
+- Atlas mesh conversion now uses the Fortran API's one-based connectivity
+	directly and applies the configured coordinate rotation before computing
+	geometry. Atlas and file-based `fesom-pi` meshes now produce matching area
+	diagnostics.
+
 # Changelog
 
 ## 2026-02-14 — Repository restructuring and dead code removal
