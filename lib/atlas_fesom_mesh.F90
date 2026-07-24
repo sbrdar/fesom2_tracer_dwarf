@@ -65,9 +65,10 @@ contains
     end if
 
     grid_obj = atlas_Grid("fesom-pi")
+    write(output_unit, *) '  --> Atlas fesom-pi grid found: ', grid_obj%name()
 
     ! Create mesh generator and generate mesh
-    meshgen_obj = atlas_MeshGenerator("fesom-pi")
+    meshgen_obj = atlas_MeshGenerator("fesom")
     mesh_obj = meshgen_obj%GENERATE(grid_obj)
 
     ! Get mesh dimensions for logging
