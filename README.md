@@ -14,10 +14,17 @@ cd build_gnu_dp
 
 This generates a 20x20 doubly-periodic triangular mesh with 10 vertical levels and runs 10 advection steps on a single MPI rank.
 
-Atlas can be configure to be used in this dwarf
+Build the Atlas dependencies, then configure the dwarf with Atlas enabled:
+
 ```bash
+./build_atlas.sh --compiler gnu
 ./configure.sh --compiler gnu --precision dp --clean --build --atlas
 ```
+
+`build_atlas.sh` selects Atlas branch
+`fix/fortran-unstructured-grid-by-id`. Existing Atlas source checkouts must be
+clean so the script can switch branches and fast-forward without overwriting
+local work.
 
 ## Running
 

@@ -51,6 +51,8 @@ ECBUILD_SOURCE="${DEPS_DIR}/ecbuild"
 ECKIT_SOURCE="${DEPS_DIR}/eckit"
 FCKIT_SOURCE="${DEPS_DIR}/fckit"
 ATLAS_SOURCE="${DEPS_DIR}/atlas"
+ATLAS_GIT_REPOSITORY="https://github.com/ecmwf/atlas.git"
+ATLAS_GIT_VERSION="fix/fortran-unstructured-grid-by-id"
 
 # Build directories
 BUILD_BASE="${SCRIPT_DIR}/atlas_builds_${COMPILER}"
@@ -106,6 +108,7 @@ echo "FC:        $FC"
 echo "CC:        $CC"
 echo "CXX:       $CXX"
 echo "Install:   $INSTALL_PREFIX"
+echo "Atlas:     $ATLAS_GIT_VERSION"
 echo "========================================="
 echo ""
 
@@ -141,11 +144,30 @@ else
     echo "fckit already cloned"
 fi
 
-if [ ! -d "$ATLAS_SOURCE" ]; then
-    echo "Cloning atlas..."
-    git clone --depth 1 --branch master https://github.com/ecmwf/atlas.git "$ATLAS_SOURCE"
+if [ ! -d "$ATLAS_SOURCE/.git" ]; then
+    if [ -e "$ATLAS_SOURCE" ]; then
+        echo "Error: Atlas source exists but is not a Git checkout: $ATLAS_SOURCE"
+        exit 1
+    fi
+    echo "Cloning Atlas $ATLAS_GIT_VERSION..."
+    git clone --depth 1 --branch "$ATLAS_GIT_VERSION" \
+        "$ATLAS_GIT_REPOSITORY" "$ATLAS_SOURCE"
 else
-    echo "atlas already cloned"
+    if [ -n "$(git -C "$ATLAS_SOURCE" status --porcelain)" ]; then
+        echo "Error: Atlas source has local changes: $ATLAS_SOURCE"
+        echo "Commit or remove those changes before selecting $ATLAS_GIT_VERSION."
+        exit 1
+    fi
+
+    echo "Updating Atlas to $ATLAS_GIT_VERSION..."
+    git -C "$ATLAS_SOURCE" fetch --depth 1 origin "$ATLAS_GIT_VERSION"
+    if git -C "$ATLAS_SOURCE" show-ref --verify --quiet \
+        "refs/heads/$ATLAS_GIT_VERSION"; then
+        git -C "$ATLAS_SOURCE" checkout "$ATLAS_GIT_VERSION"
+    else
+        git -C "$ATLAS_SOURCE" checkout -b "$ATLAS_GIT_VERSION" FETCH_HEAD
+    fi
+    git -C "$ATLAS_SOURCE" merge --ff-only FETCH_HEAD
 fi
 
 # ========================================
