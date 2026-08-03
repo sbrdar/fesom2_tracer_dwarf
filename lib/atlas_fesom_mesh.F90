@@ -13,7 +13,7 @@ module atlas_fesom_mesh_module
   use oce_mesh_module, only: mesh_setup, test_tri, find_levels_min_e2n, &
                               mesh_areas, mesh_auxiliary_arrays
   use analytic_mesh_module, only: generate_analytic_mesh
-  use g_config, only: force_rotation
+  use g_config, only: force_rotation, MeshPath
   use g_rotate_grid, only: set_mesh_transform_matrix, g2r
   use par_support_interfaces, only: init_mpi_types, init_gatherLists
   use iso_fortran_env, only: output_unit
@@ -21,6 +21,7 @@ module atlas_fesom_mesh_module
 #ifdef ENABLE_ATLAS
   use atlas_module
   use, intrinsic :: iso_c_binding, only: c_double
+  use mpi
 #endif
 
   implicit none
@@ -41,17 +42,25 @@ contains
     type(t_mesh),   intent(inout), target :: mesh
 
 #ifdef ENABLE_ATLAS
-    type(atlas_Grid)  :: grid_obj
+    type(atlas_Grid)             :: grid_obj
     type(atlas_MeshGenerator)   :: meshgen_obj
     type(atlas_Mesh)            :: mesh_obj
+    type(atlas_GridDistribution) :: dist_obj
 
     integer :: io_stat
     character(len=64)  :: env_value
+    character(len=32)  :: use_fesom_dist_str
+    character(len=10)  :: npes_string
+    character(len=256) :: dist_mesh_dir, rpart_file
     integer :: ncells, nnodes
     integer :: nl_default
     real(kind=MP) :: max_depth_default
     type(atlas_mesh_Nodes) :: mesh_nodes_obj
     type(atlas_mesh_Cells) :: mesh_cells_obj
+    ! Partition file variables
+    integer :: funit, r, node_idx, npes_in_file, error_status, ierror
+    integer, allocatable :: part_csr(:), part_per_node(:)
+    logical :: have_dist
 
     ! Use sensible defaults for fesom-pi grid
     nl_default = 10
@@ -68,9 +77,76 @@ contains
     grid_obj = atlas_Grid("fesom-pi")
     write(output_unit, *) '  --> Atlas fesom-pi grid found: ', grid_obj%name()
 
+    ! Optionally drive Atlas mesh distribution from the standard rpart.out file.
+    ! Set ATLAS_USE_FESOM_DIST=1 to enable; the file is read from the same
+    ! dist_<npes>/ directory as the non-Atlas mesh_setup() path.
+    have_dist = .false.
+    call get_environment_variable('ATLAS_USE_FESOM_DIST', use_fesom_dist_str, &
+                                  status=io_stat)
+    if (io_stat == 0 .and. trim(use_fesom_dist_str) == '1') then
+      write(npes_string, "(I10)") partit%npes
+      dist_mesh_dir = trim(MeshPath)//'dist_'//trim(ADJUSTL(npes_string))//'/'
+      rpart_file    = trim(dist_mesh_dir)//'rpart.out'
+      error_status  = 0
+      if (partit%mype == 0) then
+        open(newunit=funit, file=trim(rpart_file), action='read', status='old', &
+             iostat=io_stat)
+        if (io_stat /= 0) then
+          write(output_unit, '(3A)') &
+            '  WARNING: ATLAS_USE_FESOM_DIST=1 but cannot open ', &
+            trim(rpart_file), ' — using default Atlas distribution'
+          error_status = 1
+        else
+          allocate(part_csr(partit%npes+1))
+          read(funit, *) npes_in_file
+          if (npes_in_file /= partit%npes) error_status = 1
+          part_csr(1) = 1
+          read(funit, *) part_csr(2:partit%npes+1)
+          ! Convert per-partition counts to cumulative offsets (same as read_mesh)
+          do r = 2, partit%npes+1
+            part_csr(r) = part_csr(r-1) + part_csr(r)
+          end do
+          close(funit)
+        end if
+      end if
+      if (partit%npes > 1) then
+        call MPI_BCast(error_status, 1, MPI_INTEGER, 0, &
+                       partit%MPI_COMM_FESOM, ierror)
+        if (error_status == 0) then
+          if (partit%mype /= 0) allocate(part_csr(partit%npes+1))
+          call MPI_BCast(part_csr, partit%npes+1, MPI_INTEGER, 0, &
+                         partit%MPI_COMM_FESOM, ierror)
+        end if
+      end if
+      if (error_status == 0) then
+        ! Convert CSR (1-based offsets) to per-point 0-based partition indices
+        ! part_csr(r)..part_csr(r+1)-1 are node global indices for rank r-1
+        allocate(part_per_node(int(grid_obj%size())))
+        do r = 1, partit%npes
+          do node_idx = part_csr(r), part_csr(r+1) - 1
+            part_per_node(node_idx) = r - 1   ! 0-based partition index for Atlas
+          end do
+        end do
+        deallocate(part_csr)
+        dist_obj   = atlas_GridDistribution(part_per_node)
+        deallocate(part_per_node)
+        have_dist  = .true.
+        if (partit%mype == 0) write(output_unit, '(3A,I0,A)') &
+          '  --> ATLAS_USE_FESOM_DIST: using partition from ', &
+          trim(rpart_file), ' (', partit%npes, ' partitions)'
+      else
+        if (allocated(part_csr)) deallocate(part_csr)
+      end if
+    end if
+
     ! Create mesh generator and generate mesh
     meshgen_obj = atlas_MeshGenerator("fesom")
-    mesh_obj = meshgen_obj%GENERATE(grid_obj)
+    if (have_dist) then
+      mesh_obj = meshgen_obj%GENERATE(grid_obj, dist_obj)
+      call dist_obj%final()
+    else
+      mesh_obj = meshgen_obj%GENERATE(grid_obj)
+    end if
 
     ! Get mesh dimensions for logging
     mesh_nodes_obj = mesh_obj%nodes()
