@@ -20,7 +20,7 @@ module atlas_fesom_mesh_module
 
 #ifdef ENABLE_ATLAS
   use atlas_module
-  use, intrinsic :: iso_c_binding, only: c_double
+  use, intrinsic :: iso_c_binding, only: c_double, c_int
   use mpi
 #endif
 
@@ -61,10 +61,24 @@ contains
     integer :: funit, r, node_idx, npes_in_file, error_status, ierror
     integer, allocatable :: part_csr(:), part_per_node(:)
     logical :: have_dist
+    integer :: n_owned_from_dist   ! owned-node count derived from part_csr for this rank
 
     ! Use sensible defaults for fesom-pi grid
     nl_default = 10
     max_depth_default = 1000.0_MP
+
+    ! Read nl from aux3d.out, matching the non-atlas read_mesh path
+    if (partit%mype == 0) then
+      open(newunit=funit, file=trim(MeshPath)//'aux3d.out', status='old', &
+           action='read', iostat=io_stat)
+      if (io_stat == 0) then
+        read(funit, *, iostat=io_stat) nl_default
+        close(funit)
+        if (io_stat /= 0 .or. nl_default < 3) nl_default = 10
+      end if
+    end if
+    if (partit%npes > 1) &
+      call MPI_BCast(nl_default, 1, MPI_INTEGER, 0, partit%MPI_COMM_FESOM, ierror)
 
     ! Initialize Atlas (loads plugins including atlas-fesom, registers grids)
     call atlas_initialize()
@@ -127,6 +141,8 @@ contains
             part_per_node(node_idx) = r - 1   ! 0-based partition index for Atlas
           end do
         end do
+        ! owned-node count for this rank: part_csr(mype+1) .. part_csr(mype+2)-1
+        n_owned_from_dist = part_csr(partit%mype+2) - part_csr(partit%mype+1)
         deallocate(part_csr)
         dist_obj   = atlas_GridDistribution(part_per_node)
         deallocate(part_per_node)
@@ -136,7 +152,10 @@ contains
           trim(rpart_file), ' (', partit%npes, ' partitions)'
       else
         if (allocated(part_csr)) deallocate(part_csr)
+        n_owned_from_dist = 0
       end if
+    else
+      n_owned_from_dist = 0
     end if
 
     ! Create mesh generator and generate mesh
@@ -161,7 +180,8 @@ contains
     end if
 
     ! Convert atlas mesh to FESOM mesh
-    call atlas_mesh_to_fesom_mesh(mesh_obj, nl_default, max_depth_default, partit, mesh)
+    call atlas_mesh_to_fesom_mesh(mesh_obj, nl_default, max_depth_default, &
+                                  n_owned_from_dist, partit, mesh)
 
     call meshgen_obj%FINAL()
     call grid_obj%FINAL()
@@ -184,10 +204,11 @@ contains
   !! @param[in]    max_depth  Flat-bottom depth (positive metres)
   !! @param[inout] partit     FESOM partition structure (filled for npes=1)
   !! @param[inout] mesh3      Output FESOM t_mesh (must be uninitialised)
-  subroutine atlas_mesh_to_fesom_mesh(atlas_msh, nl, max_depth, partit, mesh3)
+  subroutine atlas_mesh_to_fesom_mesh(atlas_msh, nl, max_depth, n_owned_arg, partit, mesh3)
     type(atlas_Mesh),   intent(inout) :: atlas_msh
     integer,            intent(in)    :: nl
     real(kind=MP),      intent(in)    :: max_depth
+    integer,            intent(in)    :: n_owned_arg  ! >0: owned count from dist; 0: single-rank
     type(t_partit),     intent(inout) :: partit
     type(t_mesh),       intent(inout) :: mesh3
 
@@ -215,6 +236,9 @@ contains
     integer :: e, n, k, q, e1
     integer :: elnodes(3), eledges(3)
     real(kind=WP) :: geographic_lon, geographic_lat, rotated_lon, rotated_lat
+
+    ! Owned vs ghost node split
+    integer :: n_owned, n_ghost
 
     real(MP), parameter :: deg2rad = acos(-1.0_MP) / 180.0_MP
 
@@ -409,15 +433,23 @@ contains
     end do
 
     ! ------------------------------------------------------------------
-    ! 7. Partition arrays (npes=1: single rank owns all)
+    ! 7. Partition arrays: split owned vs ghost from the distribution or
+    !    treat all as owned when n_owned_arg == 0 (single-rank fallback)
     ! ------------------------------------------------------------------
-    partit%myDim_nod2D  = nnodes;       partit%eDim_nod2D   = 0
+    if (n_owned_arg > 0) then
+      n_owned = n_owned_arg
+    else
+      n_owned = nnodes
+    end if
+    n_ghost = nnodes - n_owned
+
+    partit%myDim_nod2D  = n_owned;      partit%eDim_nod2D   = n_ghost
     partit%myDim_elem2D = ncells;       partit%eDim_elem2D  = 0
     partit%eXDim_elem2D = 0
     partit%myDim_edge2D = edge2D_local; partit%eDim_edge2D  = 0
 
-    allocate(partit%myList_nod2D(nnodes))
-    do n = 1, nnodes; partit%myList_nod2D(n) = n; end do
+    allocate(partit%myList_nod2D(n_owned))
+    do n = 1, n_owned; partit%myList_nod2D(n) = n; end do
     allocate(partit%myList_elem2D(ncells))
     do n = 1, ncells; partit%myList_elem2D(n) = n; end do
     allocate(partit%myList_edge2D(edge2D_local))
