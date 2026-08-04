@@ -24,7 +24,7 @@ program tracer_dwarf_mesh_init
   
   integer :: n, nz, istep, nsteps, ierr
   real(kind=WP) :: dt_local
-  real(kind=WP) :: tmin, tmax, tsum, smin, smax, ssum
+  real(8) :: tmin, tmax, tsum, smin, smax, ssum
   
   ! ========================================
   ! Initialize MPI first
@@ -120,13 +120,26 @@ program tracer_dwarf_mesh_init
     write(*, '(A)') '================================================'
   end if
   
-  tmin = minval(tracers%data(1)%values(:, 1:partit%myDim_nod2D))
-  tmax = maxval(tracers%data(1)%values(:, 1:partit%myDim_nod2D))
-  tsum = sum(tracers%data(1)%values(:, 1:partit%myDim_nod2D))
+  tmin = dble(minval(tracers%data(1)%values(:, 1:partit%myDim_nod2D)))
+  tmax = dble(maxval(tracers%data(1)%values(:, 1:partit%myDim_nod2D)))
+  tsum = sum(dble(tracers%data(1)%values(:, 1:partit%myDim_nod2D)))
   
-  smin = minval(tracers%data(2)%values(:, 1:partit%myDim_nod2D))
-  smax = maxval(tracers%data(2)%values(:, 1:partit%myDim_nod2D))
-  ssum = sum(tracers%data(2)%values(:, 1:partit%myDim_nod2D))
+  smin = dble(minval(tracers%data(2)%values(:, 1:partit%myDim_nod2D)))
+  smax = dble(maxval(tracers%data(2)%values(:, 1:partit%myDim_nod2D)))
+  ssum = sum(dble(tracers%data(2)%values(:, 1:partit%myDim_nod2D)))
+
+  call MPI_Allreduce(MPI_IN_PLACE, tmin, 1, MPI_DOUBLE_PRECISION, MPI_MIN, &
+                     partit%MPI_COMM_FESOM, ierr)
+  call MPI_Allreduce(MPI_IN_PLACE, tmax, 1, MPI_DOUBLE_PRECISION, MPI_MAX, &
+                     partit%MPI_COMM_FESOM, ierr)
+  call MPI_Allreduce(MPI_IN_PLACE, tsum, 1, MPI_DOUBLE_PRECISION, MPI_SUM, &
+                     partit%MPI_COMM_FESOM, ierr)
+  call MPI_Allreduce(MPI_IN_PLACE, smin, 1, MPI_DOUBLE_PRECISION, MPI_MIN, &
+                     partit%MPI_COMM_FESOM, ierr)
+  call MPI_Allreduce(MPI_IN_PLACE, smax, 1, MPI_DOUBLE_PRECISION, MPI_MAX, &
+                     partit%MPI_COMM_FESOM, ierr)
+  call MPI_Allreduce(MPI_IN_PLACE, ssum, 1, MPI_DOUBLE_PRECISION, MPI_SUM, &
+                     partit%MPI_COMM_FESOM, ierr)
   
   if (partit%mype == 0) then
     write(*, '(A,3E14.6)') '  Temperature: min, max, sum = ', tmin, tmax, tsum
@@ -159,11 +172,16 @@ program tracer_dwarf_mesh_init
     end do
     
     ! Print statistics every step
+    tmin = dble(minval(tracers%data(1)%values(:, 1:partit%myDim_nod2D)))
+    tmax = dble(maxval(tracers%data(1)%values(:, 1:partit%myDim_nod2D)))
+    tsum = sum(dble(tracers%data(1)%values(:, 1:partit%myDim_nod2D)))
+    call MPI_Allreduce(MPI_IN_PLACE, tmin, 1, MPI_DOUBLE_PRECISION, MPI_MIN, &
+                       partit%MPI_COMM_FESOM, ierr)
+    call MPI_Allreduce(MPI_IN_PLACE, tmax, 1, MPI_DOUBLE_PRECISION, MPI_MAX, &
+                       partit%MPI_COMM_FESOM, ierr)
+    call MPI_Allreduce(MPI_IN_PLACE, tsum, 1, MPI_DOUBLE_PRECISION, MPI_SUM, &
+                       partit%MPI_COMM_FESOM, ierr)
     if (partit%mype == 0) then
-      tmin = minval(tracers%data(1)%values(:, 1:partit%myDim_nod2D))
-      tmax = maxval(tracers%data(1)%values(:, 1:partit%myDim_nod2D))
-      tsum = sum(tracers%data(1)%values(:, 1:partit%myDim_nod2D))
-      
       write(*, '(A,I4,A,3E14.6)') '  Step ', istep, ': T min, max, sum = ', tmin, tmax, tsum
     end if
   end do
