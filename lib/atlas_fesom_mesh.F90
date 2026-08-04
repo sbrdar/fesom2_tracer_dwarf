@@ -18,10 +18,10 @@ module atlas_fesom_mesh_module
   use par_support_interfaces, only: init_mpi_types, init_gatherLists
   use iso_fortran_env, only: output_unit
 
+  use mpi
 #ifdef ENABLE_ATLAS
   use atlas_module
   use, intrinsic :: iso_c_binding, only: c_double, c_int
-  use mpi
 #endif
 
   implicit none
@@ -29,7 +29,7 @@ module atlas_fesom_mesh_module
 
   public :: mesh_setup_with_atlas, compute_tracer_stats_atlas
 #ifdef ENABLE_ATLAS
-  public :: atlas_mesh_to_fesom_mesh
+  public :: atlas_mesh_to_fesom_mesh, compute_field_stats_atlas
   ! Module-level Atlas mesh (persists for stats computation)
   type(atlas_Mesh), save :: atlas_mesh_global
 #endif
@@ -539,6 +539,7 @@ contains
     end if
 
   end subroutine atlas_mesh_to_fesom_mesh
+#endif
 
   !> @brief Compute tracer min/max/sum using Atlas NodeColumns or MPI_Allreduce
   !! @details If ENABLE_ATLAS, uses atlas_functionspace_NodeColumns for reductions.
@@ -604,6 +605,25 @@ contains
                        partit%MPI_COMM_FESOM, ierr)
 #endif
   end subroutine compute_tracer_stats_atlas
+
+#ifdef ENABLE_ATLAS
+  !> @brief Compute statistics directly on an Atlas field using NodeColumns
+  !! @details Calls fs%minimum, fs%maximum, fs%sum on the given field.
+  !!          The field must be real(8) precision. Results are globally reduced
+  !!          across all MPI ranks by Atlas internally.
+  !! @param[inout] field  Atlas field to compute statistics on
+  !! @param[in]    fs     NodeColumns function space owning the field
+  !! @param[out]   tmin   Global minimum value
+  !! @param[out]   tmax   Global maximum value
+  !! @param[out]   tsum   Global sum of all owned-node values
+  subroutine compute_field_stats_atlas(field, fs, tmin, tmax, tsum)
+    type(atlas_Field),                     intent(inout) :: field
+    type(atlas_functionspace_NodeColumns), intent(in)    :: fs
+    real(8), intent(out) :: tmin, tmax, tsum
+    call fs%minimum(field, tmin)
+    call fs%maximum(field, tmax)
+    call fs%sum(field, tsum)
+  end subroutine compute_field_stats_atlas
 #endif
 
 end module atlas_fesom_mesh_module

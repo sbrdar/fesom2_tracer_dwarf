@@ -389,6 +389,25 @@ if(ENABLE_ATLAS)
     target_compile_definitions(${analytic_executable} PRIVATE ENABLE_ATLAS)
 endif()
 
+# ========================================
+# Atlas stats interpolation test (ENABLE_ATLAS only)
+# ========================================
+set(atlas_stats_test_executable ${PROJECT_NAME}_atlas_stats_test)
+add_executable(${atlas_stats_test_executable}
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/test_atlas_stats_interpolation.F90)
+apply_fesom_compile_flags(${atlas_stats_test_executable})
+target_link_libraries(${atlas_stats_test_executable} PUBLIC ${PROJECT_NAME}_Fortran)
+set_target_properties(${atlas_stats_test_executable} PROPERTIES LINKER_LANGUAGE Fortran)
+if(ENABLE_ATLAS AND ATLAS_RUNTIME_LIBDIR)
+    set_property(TARGET ${atlas_stats_test_executable} APPEND PROPERTY
+        BUILD_RPATH "${ATLAS_RUNTIME_LIBDIR}")
+    set_property(TARGET ${atlas_stats_test_executable} APPEND PROPERTY
+        INSTALL_RPATH "${ATLAS_RUNTIME_LIBDIR}")
+endif()
+if(ENABLE_ATLAS)
+    target_compile_definitions(${atlas_stats_test_executable} PRIVATE ENABLE_ATLAS)
+endif()
+
 # OpenACC linker flags for executables (NVHPC)
 if(CMAKE_Fortran_COMPILER_ID STREQUAL "PGI" OR CMAKE_Fortran_COMPILER_ID STREQUAL "NVHPC")
     if(ENABLE_OPENACC)
