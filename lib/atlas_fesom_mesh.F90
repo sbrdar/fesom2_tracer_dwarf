@@ -27,9 +27,11 @@ module atlas_fesom_mesh_module
   implicit none
   private
 
-  public :: mesh_setup_with_atlas
+  public :: mesh_setup_with_atlas, compute_tracer_stats_atlas
 #ifdef ENABLE_ATLAS
   public :: atlas_mesh_to_fesom_mesh
+  ! Module-level Atlas mesh (persists for stats computation)
+  type(atlas_Mesh), save :: atlas_mesh_global
 #endif
 
 contains
@@ -183,9 +185,11 @@ contains
     call atlas_mesh_to_fesom_mesh(mesh_obj, nl_default, max_depth_default, &
                                   n_owned_from_dist, partit, mesh)
 
+    ! Store mesh for later use by compute_tracer_stats_atlas
+    atlas_mesh_global = mesh_obj
     call meshgen_obj%FINAL()
     call grid_obj%FINAL()
-    call mesh_obj%FINAL()
+    ! Do NOT finalize mesh_obj - it's stored in atlas_mesh_global
 #else
     call mesh_setup(partit, mesh)
 #endif
@@ -535,6 +539,71 @@ contains
     end if
 
   end subroutine atlas_mesh_to_fesom_mesh
+
+  !> @brief Compute tracer min/max/sum using Atlas NodeColumns or MPI_Allreduce
+  !! @details If ENABLE_ATLAS, uses atlas_functionspace_NodeColumns for reductions.
+  !!          Otherwise, uses MPI_Allreduce.
+  !! @param[in] tracer_data 2D tracer array (nz, npoints)
+  !! @param[in] n_owned Number of owned nodes on this rank
+  !! @param[in] partit Partition structure (for MPI communicator)
+  !! @param[out] tmin Minimum value (real(8))
+  !! @param[out] tmax Maximum value (real(8))
+  !! @param[out] tsum Sum of all values (real(8))
+  subroutine compute_tracer_stats_atlas(tracer_data, n_owned, partit, tmin, tmax, tsum)
+    real(kind=WP), intent(in) :: tracer_data(:,:)
+    integer, intent(in) :: n_owned
+    type(t_partit), intent(in) :: partit
+    real(8), intent(out) :: tmin, tmax, tsum
+
+#ifdef ENABLE_ATLAS
+    type(atlas_functionspace_NodeColumns) :: fs
+    type(atlas_Field) :: field_tracer
+    real(WP), pointer :: tracer_ptr(:,:)
+    real(WP) :: tmin_wp, tmax_wp, tsum_wp
+    integer :: nz_levels
+
+    nz_levels = size(tracer_data, 1)
+    
+    ! Create NodeColumns function space from the stored mesh
+    fs = atlas_functionspace_NodeColumns(atlas_mesh_global)
+    
+    ! Create a field with proper keyword arguments
+    field_tracer = fs%create_field(name='tracer_temp', kind=atlas_real(WP), levels=nz_levels)
+    call field_tracer%data(tracer_ptr)
+    
+    ! Copy owned tracer data into field
+    tracer_ptr(:, 1:n_owned) = tracer_data(:, 1:n_owned)
+    
+    ! Compute reductions using Atlas function space subroutine calls
+    call fs%minimum(field_tracer, tmin_wp)
+    call fs%maximum(field_tracer, tmax_wp)
+    call fs%sum(field_tracer, tsum_wp)
+    
+    tmin = dble(tmin_wp)
+    tmax = dble(tmax_wp)
+    tsum = dble(tsum_wp)
+    
+    ! Clean up
+    call field_tracer%final()
+    call fs%final()
+#else
+    integer :: ierr
+    real(8) :: tmin_loc, tmax_loc, tsum_loc
+    
+    ! Compute local min/max/sum on this rank
+    tmin_loc = dble(minval(tracer_data(:, 1:n_owned)))
+    tmax_loc = dble(maxval(tracer_data(:, 1:n_owned)))
+    tsum_loc = sum(dble(tracer_data(:, 1:n_owned)))
+    
+    ! Reduce across all ranks
+    call MPI_Allreduce(tmin_loc, tmin, 1, MPI_DOUBLE_PRECISION, MPI_MIN, &
+                       partit%MPI_COMM_FESOM, ierr)
+    call MPI_Allreduce(tmax_loc, tmax, 1, MPI_DOUBLE_PRECISION, MPI_MAX, &
+                       partit%MPI_COMM_FESOM, ierr)
+    call MPI_Allreduce(tsum_loc, tsum, 1, MPI_DOUBLE_PRECISION, MPI_SUM, &
+                       partit%MPI_COMM_FESOM, ierr)
+#endif
+  end subroutine compute_tracer_stats_atlas
 #endif
 
 end module atlas_fesom_mesh_module

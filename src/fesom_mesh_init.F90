@@ -12,6 +12,7 @@ program tracer_dwarf_mesh_init
   use MOD_PARSUP
   use oce_adv_tra_driver_module
   use tracer_init_from_mesh_module
+  use atlas_fesom_mesh_module, only: compute_tracer_stats_atlas
   use g_config
   use o_PARAM
   
@@ -120,26 +121,11 @@ program tracer_dwarf_mesh_init
     write(*, '(A)') '================================================'
   end if
   
-  tmin = dble(minval(tracers%data(1)%values(:, 1:partit%myDim_nod2D)))
-  tmax = dble(maxval(tracers%data(1)%values(:, 1:partit%myDim_nod2D)))
-  tsum = sum(dble(tracers%data(1)%values(:, 1:partit%myDim_nod2D)))
-  
-  smin = dble(minval(tracers%data(2)%values(:, 1:partit%myDim_nod2D)))
-  smax = dble(maxval(tracers%data(2)%values(:, 1:partit%myDim_nod2D)))
-  ssum = sum(dble(tracers%data(2)%values(:, 1:partit%myDim_nod2D)))
-
-  call MPI_Allreduce(MPI_IN_PLACE, tmin, 1, MPI_DOUBLE_PRECISION, MPI_MIN, &
-                     partit%MPI_COMM_FESOM, ierr)
-  call MPI_Allreduce(MPI_IN_PLACE, tmax, 1, MPI_DOUBLE_PRECISION, MPI_MAX, &
-                     partit%MPI_COMM_FESOM, ierr)
-  call MPI_Allreduce(MPI_IN_PLACE, tsum, 1, MPI_DOUBLE_PRECISION, MPI_SUM, &
-                     partit%MPI_COMM_FESOM, ierr)
-  call MPI_Allreduce(MPI_IN_PLACE, smin, 1, MPI_DOUBLE_PRECISION, MPI_MIN, &
-                     partit%MPI_COMM_FESOM, ierr)
-  call MPI_Allreduce(MPI_IN_PLACE, smax, 1, MPI_DOUBLE_PRECISION, MPI_MAX, &
-                     partit%MPI_COMM_FESOM, ierr)
-  call MPI_Allreduce(MPI_IN_PLACE, ssum, 1, MPI_DOUBLE_PRECISION, MPI_SUM, &
-                     partit%MPI_COMM_FESOM, ierr)
+  ! Compute tracer statistics using Atlas (if available) or MPI_Allreduce
+  call compute_tracer_stats_atlas(tracers%data(1)%values, partit%myDim_nod2D, &
+                                   partit, tmin, tmax, tsum)
+  call compute_tracer_stats_atlas(tracers%data(2)%values, partit%myDim_nod2D, &
+                                   partit, smin, smax, ssum)
   
   if (partit%mype == 0) then
     write(*, '(A,3E14.6)') '  Temperature: min, max, sum = ', tmin, tmax, tsum
@@ -171,16 +157,9 @@ program tracer_dwarf_mesh_init
                           dynamics, tracers, partit, mesh)
     end do
     
-    ! Print statistics every step
-    tmin = dble(minval(tracers%data(1)%values(:, 1:partit%myDim_nod2D)))
-    tmax = dble(maxval(tracers%data(1)%values(:, 1:partit%myDim_nod2D)))
-    tsum = sum(dble(tracers%data(1)%values(:, 1:partit%myDim_nod2D)))
-    call MPI_Allreduce(MPI_IN_PLACE, tmin, 1, MPI_DOUBLE_PRECISION, MPI_MIN, &
-                       partit%MPI_COMM_FESOM, ierr)
-    call MPI_Allreduce(MPI_IN_PLACE, tmax, 1, MPI_DOUBLE_PRECISION, MPI_MAX, &
-                       partit%MPI_COMM_FESOM, ierr)
-    call MPI_Allreduce(MPI_IN_PLACE, tsum, 1, MPI_DOUBLE_PRECISION, MPI_SUM, &
-                       partit%MPI_COMM_FESOM, ierr)
+    ! Print statistics every step (computed globally across all ranks)
+    call compute_tracer_stats_atlas(tracers%data(1)%values, partit%myDim_nod2D, &
+                                     partit, tmin, tmax, tsum)
     if (partit%mype == 0) then
       write(*, '(A,I4,A,3E14.6)') '  Step ', istep, ': T min, max, sum = ', tmin, tmax, tsum
     end if
