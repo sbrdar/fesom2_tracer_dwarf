@@ -19,7 +19,7 @@ module oce_mesh_module
     private
     public :: mesh_setup, read_mesh, find_levels, find_levels_cavity, test_tri, load_edges, &
               find_neighbors, mesh_areas, elem_center, edge_center, mesh_auxiliary_arrays, &
-              find_levels_min_e2n, check_total_volume, check_mesh_consistency
+              find_levels_min_e2n, check_total_volume, check_mesh_consistency, uncompress_partit
 
     ! MPI datatype for WP precision
 #ifdef USE_HALF_PRECISION
@@ -57,7 +57,8 @@ SUBROUTINE mesh_setup(partit, mesh)
       type(atlas_Grid)             :: atlas_grid_pi
       type(atlas_MeshGenerator)    :: atlas_meshgen_pi
       type(atlas_Mesh)             :: fesom_pi
-
+      type(atlas_GridDistribution) :: distribution
+    integer, allocatable         :: partition_array(:)
       ! Generate atlas mesh from fesom-pi grid
       call atlas_initialize()
 
@@ -68,8 +69,11 @@ SUBROUTINE mesh_setup(partit, mesh)
           '  --> Atlas mesh generated from fesom-pi grid (atlas-fesom plugin)'
       end if
 
+      call uncompress_partit(partit%part, partition_array)
+      distribution = atlas_GridDistribution(partition_array, part0=1)
+
       atlas_meshgen_pi      = atlas_MeshGenerator("fesom")
-      fesom_pi              = atlas_meshgen_pi%generate(atlas_grid_pi)
+      fesom_pi              = atlas_meshgen_pi%generate(atlas_grid_pi,distribution)
 
       ! Clean up atlas objects
       call fesom_pi%final()
@@ -122,6 +126,30 @@ SUBROUTINE mesh_setup(partit, mesh)
 #endif
 
 END SUBROUTINE mesh_setup
+!======================================================================
+! Expand 1-based CSR partition offsets to one 1-based owner per point.
+SUBROUTINE uncompress_partit(partit_csr, partition_array)
+    integer, intent(in)              :: partit_csr(:)
+    integer, allocatable, intent(out) :: partition_array(:)
+    integer                          :: partition, num_partitions, num_points
+
+    num_partitions = size(partit_csr) - 1
+    if (num_partitions < 1) then
+        error stop 'uncompress_partit: CSR array must contain at least two offsets'
+    end if
+    if (partit_csr(1) /= 1) then
+        error stop 'uncompress_partit: first CSR offset must be 1'
+    end if
+    if (any(partit_csr(2:) < partit_csr(:num_partitions))) then
+        error stop 'uncompress_partit: CSR offsets must be nondecreasing'
+    end if
+
+    num_points = partit_csr(num_partitions + 1) - 1
+    allocate(partition_array(num_points))
+    do partition = 1, num_partitions
+        partition_array(partit_csr(partition):partit_csr(partition + 1) - 1) = partition
+    end do
+END SUBROUTINE uncompress_partit
 !======================================================================
 ! Reads distributed mesh
 ! The mesh will be read only by 0 proc and broadcasted to the others.

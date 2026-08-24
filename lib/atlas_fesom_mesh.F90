@@ -32,6 +32,7 @@ module atlas_fesom_mesh_module
   public :: atlas_mesh_to_fesom_mesh, compute_field_stats_atlas
   ! Module-level Atlas mesh (persists for stats computation)
   type(atlas_Mesh), save :: atlas_mesh_global
+  logical, allocatable, save :: atlas_node_owned(:)
 #endif
 
 contains
@@ -219,9 +220,11 @@ contains
     ! Atlas helper objects
     type(atlas_mesh_Nodes)             :: atlas_nodes
     type(atlas_mesh_Cells)             :: atlas_cells
-    type(atlas_Field)                  :: atlas_field
+    type(atlas_Field)                  :: lonlat_field
+    type(atlas_Field)                  :: global_index_field
     type(atlas_MultiBlockConnectivity) :: atlas_conn
     real(c_double), pointer            :: lonlat(:,:)        ! (2, nnodes) degrees
+    integer(ATLAS_KIND_GIDX), pointer  :: global_index(:)
     integer(ATLAS_KIND_IDX), pointer   :: conn_padded(:,:)   ! (3, ncells)  1-based
     integer(ATLAS_KIND_IDX), pointer   :: conn_ncols(:)      ! (ncells)
 
@@ -242,7 +245,8 @@ contains
     real(kind=WP) :: geographic_lon, geographic_lat, rotated_lon, rotated_lat
 
     ! Owned vs ghost node split
-    integer :: n_owned, n_ghost
+    integer :: n_owned, n_ghost, max_global_index, local_max_global_index, ierror
+    integer, allocatable :: node_owner(:), global_node_owner(:)
 
     real(MP), parameter :: deg2rad = acos(-1.0_MP) / 180.0_MP
 
@@ -254,6 +258,33 @@ contains
     nnodes = int(atlas_nodes%size())
     ncells = int(atlas_cells%size())
 
+    global_index_field = atlas_nodes%global_index()
+    call global_index_field%data(global_index)
+    local_max_global_index = int(maxval(global_index))
+    call MPI_Allreduce(local_max_global_index, max_global_index, 1, MPI_INTEGER, &
+                       MPI_MAX, partit%MPI_COMM_FESOM, ierror)
+    allocate(node_owner(max_global_index), global_node_owner(max_global_index))
+    node_owner = huge(0)
+    do n = 1, nnodes
+      node_owner(int(global_index(n))) = partit%mype
+    end do
+    call MPI_Allreduce(node_owner, global_node_owner, max_global_index, MPI_INTEGER, &
+                       MPI_MIN, partit%MPI_COMM_FESOM, ierror)
+    if (allocated(atlas_node_owned)) deallocate(atlas_node_owned)
+    allocate(atlas_node_owned(nnodes))
+    do n = 1, nnodes
+      atlas_node_owned(n) = global_node_owner(int(global_index(n))) == partit%mype
+    end do
+    deallocate(node_owner, global_node_owner)
+    call global_index_field%final()
+
+    if (n_owned_arg > 0) then
+      n_owned = n_owned_arg
+    else
+      n_owned = nnodes
+    end if
+    n_ghost = nnodes - n_owned
+
     if (partit%mype == 0) then
       write(output_unit, '(A,I0,A,I0)') &
         '  atlas_mesh_to_fesom_mesh: nnodes=', nnodes, ', ncells=', ncells
@@ -262,8 +293,8 @@ contains
     ! ------------------------------------------------------------------
     ! 2. Node coordinates: lon/lat degrees -> radians -> coord_nod2D
     ! ------------------------------------------------------------------
-    atlas_field = atlas_nodes%lonlat()
-    call atlas_field%data(lonlat)   ! lonlat(1,n)=lon, lonlat(2,n)=lat [degrees]
+    lonlat_field = atlas_nodes%lonlat()
+    call lonlat_field%data(lonlat)   ! lonlat(1,n)=lon, lonlat(2,n)=lat [degrees]
     mesh3%nod2D = nnodes
     allocate(mesh3%coord_nod2D(2, nnodes))
     call set_mesh_transform_matrix()
@@ -279,7 +310,7 @@ contains
         mesh3%coord_nod2D(2, n) = real(geographic_lat, MP)
       end if
     end do
-    call atlas_field%final()
+    call lonlat_field%final()
 
     ! ------------------------------------------------------------------
     ! 3. Cell connectivity: Atlas Fortran indices are already 1-based
@@ -437,16 +468,8 @@ contains
     end do
 
     ! ------------------------------------------------------------------
-    ! 7. Partition arrays: split owned vs ghost from the distribution or
-    !    treat all as owned when n_owned_arg == 0 (single-rank fallback)
+    ! 7. Partition arrays: Atlas stores owned nodes before ghost nodes.
     ! ------------------------------------------------------------------
-    if (n_owned_arg > 0) then
-      n_owned = n_owned_arg
-    else
-      n_owned = nnodes
-    end if
-    n_ghost = nnodes - n_owned
-
     partit%myDim_nod2D  = n_owned;      partit%eDim_nod2D   = n_ghost
     partit%myDim_elem2D = ncells;       partit%eDim_elem2D  = 0
     partit%eXDim_elem2D = 0
@@ -541,9 +564,9 @@ contains
   end subroutine atlas_mesh_to_fesom_mesh
 #endif
 
-  !> @brief Compute tracer min/max/sum using Atlas NodeColumns or MPI_Allreduce
-  !! @details If ENABLE_ATLAS, uses atlas_functionspace_NodeColumns for reductions.
-  !!          Otherwise, uses MPI_Allreduce.
+  !> @brief Compute tracer min/max/sum using MPI_Allreduce
+  !! @details Atlas meshes can contain unmarked overlap nodes, so Atlas builds
+  !!          reduce only the unique global-node ownership mask.
   !! @param[in] tracer_data 2D tracer array (nz, npoints)
   !! @param[in] n_owned Number of owned nodes on this rank
   !! @param[in] partit Partition structure (for MPI communicator)
@@ -557,36 +580,25 @@ contains
     real(8), intent(out) :: tmin, tmax, tsum
 
 #ifdef ENABLE_ATLAS
-    type(atlas_functionspace_NodeColumns) :: fs
-    type(atlas_Field) :: field_tracer
-    real(WP), pointer :: tracer_ptr(:,:)
-    real(WP) :: tmin_wp, tmax_wp, tsum_wp
-    integer :: nz_levels
+    integer :: ierr, node
+    real(8) :: tmin_loc, tmax_loc, tsum_loc
 
-    nz_levels = size(tracer_data, 1)
-    
-    ! Create NodeColumns function space from the stored mesh
-    fs = atlas_functionspace_NodeColumns(atlas_mesh_global)
-    
-    ! Create a field with proper keyword arguments
-    field_tracer = fs%create_field(name='tracer_temp', kind=atlas_real(WP), levels=nz_levels)
-    call field_tracer%data(tracer_ptr)
-    
-    ! Copy owned tracer data into field
-    tracer_ptr(:, 1:n_owned) = tracer_data(:, 1:n_owned)
-    
-    ! Compute reductions using Atlas function space subroutine calls
-    call fs%minimum(field_tracer, tmin_wp)
-    call fs%maximum(field_tracer, tmax_wp)
-    call fs%sum(field_tracer, tsum_wp)
-    
-    tmin = dble(tmin_wp)
-    tmax = dble(tmax_wp)
-    tsum = dble(tsum_wp)
-    
-    ! Clean up
-    call field_tracer%final()
-    call fs%final()
+    tmin_loc = huge(tmin_loc)
+    tmax_loc = -huge(tmax_loc)
+    tsum_loc = 0.0_8
+    do node = 1, min(size(atlas_node_owned), size(tracer_data, 2))
+      if (atlas_node_owned(node)) then
+        tmin_loc = min(tmin_loc, dble(minval(tracer_data(:, node))))
+        tmax_loc = max(tmax_loc, dble(maxval(tracer_data(:, node))))
+        tsum_loc = tsum_loc + sum(dble(tracer_data(:, node)))
+      end if
+    end do
+    call MPI_Allreduce(tmin_loc, tmin, 1, MPI_DOUBLE_PRECISION, MPI_MIN, &
+                       partit%MPI_COMM_FESOM, ierr)
+    call MPI_Allreduce(tmax_loc, tmax, 1, MPI_DOUBLE_PRECISION, MPI_MAX, &
+                       partit%MPI_COMM_FESOM, ierr)
+    call MPI_Allreduce(tsum_loc, tsum, 1, MPI_DOUBLE_PRECISION, MPI_SUM, &
+                       partit%MPI_COMM_FESOM, ierr)
 #else
     integer :: ierr
     real(8) :: tmin_loc, tmax_loc, tsum_loc
