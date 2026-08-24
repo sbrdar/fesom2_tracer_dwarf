@@ -17,8 +17,9 @@
 	directly and applies the configured coordinate rotation before computing
 	geometry. Atlas and file-based `fesom-pi` meshes now produce matching area
 	diagnostics.
-- Atlas tracer statistics now assign overlapping local nodes to one MPI rank by
-	global node index, making min/max/sum diagnostics independent of rank count.
+- Atlas tracer statistics now mark overlapping local nodes as ghosts by global
+	node index and use `NodeColumns` field reductions, making min/max/sum
+	diagnostics independent of rank count.
 
 # Changelog
 
