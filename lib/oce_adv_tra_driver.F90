@@ -205,7 +205,9 @@ subroutine do_oce_adv_tra(dt, vel, w, wi, we, tr_num, dynamics, tracers, partit,
             !!PS do  nz=1, nlevels_nod2D(n)-1
             !$ACC LOOP VECTOR
             do  nz= nu1, nl1-1
-                fct_LO(nz,n)=(ttf(nz,n)*mesh%hnode(nz,n)+(fct_LO(nz,n)+(adv_flux_ver(nz, n)-adv_flux_ver(nz+1, n)))*dt/mesh%areasvol(nz,n))/mesh%hnode_new(nz,n)
+                fct_LO(nz,n)=(ttf(nz,n)*mesh%hnode(nz,n) &
+                    +(fct_LO(nz,n)+(adv_flux_ver(nz,n)-adv_flux_ver(nz+1,n))) &
+                    *dt*mesh%areasvol_inv(nz,n))/mesh%hnode_new(nz,n)
             end do
             !$ACC END LOOP
         end do
@@ -357,7 +359,8 @@ subroutine oce_tra_adv_flux2dtracer(dt, dttf_h, dttf_v, flux_h, flux_v, partit, 
         nl1 = mesh%nlevels_nod2D(n)
         !$ACC LOOP VECTOR
         do nz=nu1,nl1-1
-            dttf_v(nz,n)=dttf_v(nz,n) + (flux_v(nz,n)-flux_v(nz+1,n))*dt/mesh%areasvol(nz,n)
+            dttf_v(nz,n)=dttf_v(nz,n) + (flux_v(nz,n)-flux_v(nz+1,n)) &
+                *dt*mesh%areasvol_inv(nz,n)
         end do
         !$ACC END LOOP
     end do
@@ -408,7 +411,8 @@ subroutine oce_tra_adv_flux2dtracer(dt, dttf_h, dttf_v, flux_h, flux_v, partit, 
 #if !defined(DISABLE_OPENACC_ATOMICS)
             !$ACC ATOMIC UPDATE
 #endif
-            dttf_h(nz,enodes(1))=dttf_h(nz,enodes(1))+flux_h(nz,edge)*dt/mesh%areasvol(nz,enodes(1))
+            dttf_h(nz,enodes(1))=dttf_h(nz,enodes(1))+flux_h(nz,edge) &
+                *dt*mesh%areasvol_inv(nz,enodes(1))
 #ifndef ENABLE_OPENACC
 #if defined(_OPENMP)  && !defined(__openmp_reproducible)
         end do
@@ -421,7 +425,8 @@ subroutine oce_tra_adv_flux2dtracer(dt, dttf_h, dttf_v, flux_h, flux_v, partit, 
             !$ACC ATOMIC UPDATE
 #endif
 #endif
-            dttf_h(nz,enodes(2))=dttf_h(nz,enodes(2))-flux_h(nz,edge)*dt/mesh%areasvol(nz,enodes(2))
+            dttf_h(nz,enodes(2))=dttf_h(nz,enodes(2))-flux_h(nz,edge) &
+                *dt*mesh%areasvol_inv(nz,enodes(2))
         end do
 #ifndef ENABLE_OPENACC
 #if defined(_OPENMP)  && !defined(__openmp_reproducible)

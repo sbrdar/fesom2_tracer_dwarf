@@ -61,10 +61,12 @@ contains
     character(len=10)  :: npes_string
     character(len=256) :: dist_mesh_dir, rpart_file
     integer :: ncells, nnodes
-    integer :: nl_default
+    integer :: nl_default, ncells_shrinked
     real(kind=MP), allocatable :: zbar_default(:)
     type(atlas_mesh_Nodes) :: mesh_nodes_obj
     type(atlas_mesh_Cells) :: mesh_cells_obj
+    type(atlas_mesh_Cells), pointer :: mesh_obj_cells
+    type(atlas_functionspace_NodeColumns) :: fs_dummy
     ! Partition file variables
     integer :: funit, r, node_idx, npes_in_file, error_status, ierror
     integer, allocatable :: part_csr(:), part_per_node(:)
@@ -184,11 +186,15 @@ contains
       mesh_obj = meshgen_obj%GENERATE(grid_obj)
     end if
 
+    ! This adapts the mesh with one halo
+    fs_dummy = atlas_functionspace_NodeColumns(mesh_obj,halo=2)
+
     ! Get mesh dimensions for logging
     mesh_nodes_obj = mesh_obj%nodes()
     mesh_cells_obj = mesh_obj%cells()
     nnodes = int(mesh_nodes_obj%size())
     ncells = int(mesh_cells_obj%size())
+    ncells_shrinked = int(mesh_cells_obj%size())
 
     if (partit%mype == 0) then
       write(output_unit, '(A)') '  --> Setting up mesh from Atlas fesom-pi grid'
@@ -198,6 +204,7 @@ contains
 
     ! Convert atlas mesh to FESOM mesh
     call atlas_mesh_to_fesom_mesh(mesh_obj, zbar_default, partit, mesh)
+    partit%myDim_elem2D_shrinked = ncells_shrinked
     deallocate(zbar_default)
 
     ! Store mesh for later use by compute_tracer_stats_atlas
@@ -232,12 +239,14 @@ contains
     type(atlas_mesh_Nodes)             :: atlas_nodes
     type(atlas_mesh_Cells)             :: atlas_cells
     type(atlas_Field)                  :: lonlat_field
-    type(atlas_Field)                  :: global_index_field
+    type(atlas_Field)                  :: node_global_index_field
+    type(atlas_Field)                  :: cell_global_index_field
     type(atlas_Field)                  :: flags_field
     type(atlas_Field)                  :: ghost_field
     type(atlas_MultiBlockConnectivity) :: atlas_conn
     real(c_double), pointer            :: lonlat(:,:)        ! (2, nnodes) degrees
-    integer(ATLAS_KIND_GIDX), pointer  :: global_index(:)
+    integer(ATLAS_KIND_GIDX), pointer  :: node_global_index(:)
+    integer(ATLAS_KIND_GIDX), pointer  :: cell_global_index(:)
     integer(c_int), pointer            :: node_flags(:)
     integer(c_int), pointer            :: node_ghost(:)
     integer(ATLAS_KIND_IDX), pointer   :: conn_padded(:,:)   ! (3, ncells)  1-based
@@ -245,6 +254,9 @@ contains
 
     ! Mesh dimensions
     integer :: nnodes, ncells, nl, edge2D_local, edge2D_in_local
+    integer :: global_nnodes, global_ncells, local_global_nnodes
+    integer :: local_global_ncells, file_unit, io_stat
+    integer, allocatable :: global_node_levels(:), global_cell_levels(:)
 
     ! Half-edge sorting arrays (3 per cell)
     integer :: n_hedges, i, j
@@ -508,10 +520,54 @@ contains
     ! 8. Level arrays
     ! ------------------------------------------------------------------
     allocate(mesh3%ulevels(ncells));          mesh3%ulevels = 1
-    allocate(mesh3%nlevels(ncells));          mesh3%nlevels = nl
+    allocate(mesh3%nlevels(ncells))
     allocate(mesh3%ulevels_nod2D(nnodes));    mesh3%ulevels_nod2D = 1
-    allocate(mesh3%nlevels_nod2D(nnodes));    mesh3%nlevels_nod2D = nl
+    allocate(mesh3%nlevels_nod2D(nnodes))
     allocate(mesh3%bc_index_nod2D(nnodes));   mesh3%bc_index_nod2D = 0
+
+    node_global_index_field = atlas_nodes%global_index()
+    cell_global_index_field = atlas_cells%global_index()
+    call node_global_index_field%data(node_global_index)
+    call cell_global_index_field%data(cell_global_index)
+
+    local_global_nnodes = int(maxval(node_global_index))
+    local_global_ncells = int(maxval(cell_global_index))
+    call MPI_Allreduce(local_global_nnodes, global_nnodes, 1, MPI_INTEGER, &
+                       MPI_MAX, partit%MPI_COMM_FESOM, ierror)
+    call MPI_Allreduce(local_global_ncells, global_ncells, 1, MPI_INTEGER, &
+                       MPI_MAX, partit%MPI_COMM_FESOM, ierror)
+    allocate(global_node_levels(global_nnodes))
+    allocate(global_cell_levels(global_ncells))
+
+    if (partit%mype == 0) then
+      open(newunit=file_unit, file=trim(MeshPath)//'nlvls.out', status='old', &
+           action='read', iostat=io_stat)
+      if (io_stat /= 0) error stop 'Cannot open nlvls.out for Atlas mesh'
+      read(file_unit, *, iostat=io_stat) global_node_levels
+      close(file_unit)
+      if (io_stat /= 0) error stop 'Cannot read nlvls.out for Atlas mesh'
+
+      open(newunit=file_unit, file=trim(MeshPath)//'elvls.out', status='old', &
+           action='read', iostat=io_stat)
+      if (io_stat /= 0) error stop 'Cannot open elvls.out for Atlas mesh'
+      read(file_unit, *, iostat=io_stat) global_cell_levels
+      close(file_unit)
+      if (io_stat /= 0) error stop 'Cannot read elvls.out for Atlas mesh'
+    end if
+    call MPI_BCast(global_node_levels, global_nnodes, MPI_INTEGER, 0, &
+                   partit%MPI_COMM_FESOM, ierror)
+    call MPI_BCast(global_cell_levels, global_ncells, MPI_INTEGER, 0, &
+                   partit%MPI_COMM_FESOM, ierror)
+
+    do n = 1, nnodes
+      mesh3%nlevels_nod2D(n) = global_node_levels(int(node_global_index(n)))
+    end do
+    do e = 1, ncells
+      mesh3%nlevels(e) = global_cell_levels(int(cell_global_index(e)))
+    end do
+    deallocate(global_node_levels, global_cell_levels)
+    call node_global_index_field%final()
+    call cell_global_index_field%final()
 
     ! ------------------------------------------------------------------
     ! 9. elem_neighbors and nod_in_elem2D
@@ -599,6 +655,7 @@ contains
 
     atlas_tracer = 0.0_WP
     atlas_tracer(:, 1:n_owned) = tracer_data(:, 1:n_owned)
+    call fs%halo_exchange(tracer_field)
 
     call fs%minimum(tracer_field, tmin_wp)
     call fs%maximum(tracer_field, tmax_wp)

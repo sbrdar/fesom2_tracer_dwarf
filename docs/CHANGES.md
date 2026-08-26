@@ -13,6 +13,13 @@
 
 ## Fixed
 
+- Atlas tracer statistics now halo-fill temporary fields before reductions, so
+	zero-initialized ghost slots cannot produce a false minimum for positive fields.
+- Atlas mesh conversion now maps `nlvls.out` and `elvls.out` onto local nodes
+	and cells by Atlas global index, matching the file-based vertical domain and
+	per-step tracer results.
+- Tracer flux-divergence updates now use the guarded inverse control-volume
+	area, avoiding `0/0` and NaNs at zero-area nodes in distributed Atlas meshes.
 - Atlas mesh conversion now uses the Fortran API's one-based connectivity
 	directly and applies the configured coordinate rotation before computing
 	geometry. Atlas and file-based `fesom-pi` meshes now produce matching area

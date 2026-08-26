@@ -23,8 +23,9 @@ program tracer_dwarf_mesh_init
   type(t_dyn)    :: dynamics
   type(t_tracer) :: tracers
   
-  integer :: n, nz, istep, nsteps, ierr
-  real(kind=WP) :: dt_local
+  integer :: n, nz, istep, nsteps, ierr, elem, kz, nzmin, nzmax
+  integer :: elem_nodes(3)
+  real(kind=WP) :: dt_local, x_coord, y_coord, z_coord
   real(8) :: tmin, tmax, tsum, smin, smax, ssum
   
   ! ========================================
@@ -75,6 +76,21 @@ program tracer_dwarf_mesh_init
   ! Initialize mesh and arrays from mesh files
   ! ========================================
   call tracer_init_mesh_and_arrays(partit, mesh, dynamics, tracers)
+
+  ! Use a smooth, spatially varying horizontal velocity field.
+  nz = mesh%nl - 1
+  do elem = 1, partit%myDim_elem2D
+    elem_nodes = mesh%elem2D_nodes(:, elem)
+    x_coord = sum(real(mesh%coord_nod2D(1, elem_nodes), WP)) / 3.0_WP
+    y_coord = sum(real(mesh%coord_nod2D(2, elem_nodes), WP)) / 3.0_WP
+    do kz = 1, nz
+      z_coord = real(kz-1, WP) / real(nz-1, WP)
+      dynamics%uv(1, kz, elem) = 0.1_WP * &
+        (1.0_WP + 0.25_WP*sin(x_coord)*cos(y_coord)) * (1.0_WP - 0.2_WP*z_coord)
+      dynamics%uv(2, kz, elem) = 0.05_WP * &
+        cos(x_coord)*sin(y_coord) * (1.0_WP - 0.2_WP*z_coord)
+    end do
+  end do
   
   ! ========================================
   ! Set custom tracer values
@@ -85,18 +101,18 @@ program tracer_dwarf_mesh_init
     write(*, '(A)') '================================================'
   end if
   
-  nz = mesh%nl - 1
-  
-  ! Set temperature: warm at surface, cold at depth
+  ! Set tracers to affine functions of horizontal position and depth.
   do n = 1, partit%myDim_nod2D
+    x_coord = real(mesh%coord_nod2D(1, n), WP)
+    y_coord = real(mesh%coord_nod2D(2, n), WP)
     do istep = 1, nz
-      ! Simple vertical gradient: 20°C at surface, 5°C at bottom
-      tracers%data(1)%values(istep, n) = 20.0_WP - 15.0_WP * real(istep-1, WP) / real(nz-1, WP)
+      z_coord = real(istep-1, WP) / real(nz-1, WP)
+      tracers%data(1)%values(istep, n) = 15.0_WP + 2.0_WP*x_coord &
+                                      - 1.0_WP*y_coord - 10.0_WP*z_coord
+      tracers%data(2)%values(istep, n) = 35.0_WP - 0.5_WP*x_coord &
+                                      + 0.25_WP*y_coord + 1.0_WP*z_coord
     end do
   end do
-  
-  ! Set salinity: constant 35 PSU
-  tracers%data(2)%values(:, 1:partit%myDim_nod2D) = 35.0_WP
   
   ! Initialize AB and old values
   do n = 1, tracers%num_tracers
@@ -107,8 +123,8 @@ program tracer_dwarf_mesh_init
   end do
   
   if (partit%mype == 0) then
-    write(*, '(A)') '  Temperature: 20°C (surface) -> 5°C (bottom)'
-    write(*, '(A)') '  Salinity: 35 PSU (constant)'
+    write(*, '(A)') '  Temperature: linear in x, y, and depth'
+    write(*, '(A)') '  Salinity: linear in x, y, and depth'
     write(*, '(A)') ''
   end if
   
@@ -128,8 +144,8 @@ program tracer_dwarf_mesh_init
                                    partit, smin, smax, ssum)
   
   if (partit%mype == 0) then
-    write(*, '(A,3E14.6)') '  Temperature: min, max, sum = ', tmin, tmax, tsum
-    write(*, '(A,3E14.6)') '  Salinity:    min, max, sum = ', smin, smax, ssum
+    write(*, '(A,3E18.10)') '  Temperature: min, max, sum = ', tmin, tmax, tsum
+    write(*, '(A,3E18.10)') '  Salinity:    min, max, sum = ', smin, smax, ssum
     write(*, '(A)') ''
   end if
   
@@ -153,15 +169,31 @@ program tracer_dwarf_mesh_init
   do istep = 1, nsteps
     ! Advect each tracer
     do n = 1, tracers%num_tracers
+      tracers%work%del_ttf = 0.0_MP
+      tracers%work%del_ttf_advhoriz = 0.0_MP
+      tracers%work%del_ttf_advvert = 0.0_MP
+      tracers%data(n)%valuesAB = tracers%data(n)%values
+
       call do_oce_adv_tra(dt_local, dynamics%uv, dynamics%w, dynamics%w, dynamics%w, n, &
                           dynamics, tracers, partit, mesh)
+
+      tracers%work%del_ttf = tracers%work%del_ttf_advhoriz &
+                            + tracers%work%del_ttf_advvert
+      do kz = 1, partit%myDim_nod2D
+        nzmin = mesh%ulevels_nod2D(kz)
+        nzmax = mesh%nlevels_nod2D(kz) - 1
+        tracers%data(n)%values(nzmin:nzmax, kz) = &
+          tracers%data(n)%values(nzmin:nzmax, kz) &
+          + tracers%work%del_ttf(nzmin:nzmax, kz) &
+          / mesh%hnode_new(nzmin:nzmax, kz)
+      end do
     end do
     
     ! Print statistics every step (computed globally across all ranks)
     call compute_tracer_stats_atlas(tracers%data(1)%values, partit%myDim_nod2D, &
                                      partit, tmin, tmax, tsum)
     if (partit%mype == 0) then
-      write(*, '(A,I4,A,3E14.6)') '  Step ', istep, ': T min, max, sum = ', tmin, tmax, tsum
+      write(*, '(A,I4,A,3E18.10)') '  Step ', istep, ': T min, max, sum = ', tmin, tmax, tsum
     end if
   end do
   
