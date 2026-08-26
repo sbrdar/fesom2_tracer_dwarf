@@ -97,6 +97,8 @@ if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
     # This is a standalone build
     set(lib_home ${CMAKE_CURRENT_SOURCE_DIR}/lib)
     message(STATUS "Building as standalone tracer dwarf")
+    file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
+         DESTINATION "${CMAKE_CURRENT_BINARY_DIR}/tests")
 
     # Set default install prefix if not specified
     if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)

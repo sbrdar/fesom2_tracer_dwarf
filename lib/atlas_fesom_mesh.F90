@@ -27,6 +27,12 @@ module atlas_fesom_mesh_module
   implicit none
   private
 
+#if defined(USE_HALF_PRECISION) || defined(USE_SINGLE_PRECISION)
+  integer, parameter :: MPI_MP = MPI_REAL
+#else
+  integer, parameter :: MPI_MP = MPI_DOUBLE_PRECISION
+#endif
+
   public :: mesh_setup_with_atlas, compute_tracer_stats_atlas
 #ifdef ENABLE_ATLAS
   public :: atlas_mesh_to_fesom_mesh, compute_field_stats_atlas
@@ -56,31 +62,44 @@ contains
     character(len=256) :: dist_mesh_dir, rpart_file
     integer :: ncells, nnodes
     integer :: nl_default
-    real(kind=MP) :: max_depth_default
+    real(kind=MP), allocatable :: zbar_default(:)
     type(atlas_mesh_Nodes) :: mesh_nodes_obj
     type(atlas_mesh_Cells) :: mesh_cells_obj
     ! Partition file variables
     integer :: funit, r, node_idx, npes_in_file, error_status, ierror
     integer, allocatable :: part_csr(:), part_per_node(:)
     logical :: have_dist
-    integer :: n_owned_from_dist   ! owned-node count derived from part_csr for this rank
 
     ! Use sensible defaults for fesom-pi grid
     nl_default = 10
-    max_depth_default = 1000.0_MP
 
-    ! Read nl from aux3d.out, matching the non-atlas read_mesh path
+    ! Read the vertical profile from aux3d.out, matching read_mesh.
     if (partit%mype == 0) then
       open(newunit=funit, file=trim(MeshPath)//'aux3d.out', status='old', &
            action='read', iostat=io_stat)
       if (io_stat == 0) then
         read(funit, *, iostat=io_stat) nl_default
+        if (io_stat == 0 .and. nl_default >= 3) then
+          allocate(zbar_default(nl_default))
+          read(funit, *, iostat=io_stat) zbar_default
+        end if
         close(funit)
-        if (io_stat /= 0 .or. nl_default < 3) nl_default = 10
+      end if
+      if (io_stat /= 0 .or. nl_default < 3) then
+        nl_default = 10
+        if (allocated(zbar_default)) deallocate(zbar_default)
+        allocate(zbar_default(nl_default))
+        zbar_default = [( -1000.0_MP * real(r-1, MP) / real(nl_default-1, MP), &
+                          r=1,nl_default )]
       end if
     end if
-    if (partit%npes > 1) &
+    if (partit%npes > 1) then
       call MPI_BCast(nl_default, 1, MPI_INTEGER, 0, partit%MPI_COMM_FESOM, ierror)
+      if (partit%mype /= 0) allocate(zbar_default(nl_default))
+      call MPI_BCast(zbar_default, nl_default, MPI_MP, 0, &
+                     partit%MPI_COMM_FESOM, ierror)
+    end if
+    if (zbar_default(2) > 0.0_MP) zbar_default = -zbar_default
 
     ! Initialize Atlas (loads plugins including atlas-fesom, registers grids)
     call atlas_initialize()
@@ -144,7 +163,6 @@ contains
           end do
         end do
         ! owned-node count for this rank: part_csr(mype+1) .. part_csr(mype+2)-1
-        n_owned_from_dist = part_csr(partit%mype+2) - part_csr(partit%mype+1)
         deallocate(part_csr)
         dist_obj   = atlas_GridDistribution(part_per_node)
         deallocate(part_per_node)
@@ -154,10 +172,7 @@ contains
           trim(rpart_file), ' (', partit%npes, ' partitions)'
       else
         if (allocated(part_csr)) deallocate(part_csr)
-        n_owned_from_dist = 0
       end if
-    else
-      n_owned_from_dist = 0
     end if
 
     ! Create mesh generator and generate mesh
@@ -182,8 +197,8 @@ contains
     end if
 
     ! Convert atlas mesh to FESOM mesh
-    call atlas_mesh_to_fesom_mesh(mesh_obj, nl_default, max_depth_default, &
-                                  n_owned_from_dist, partit, mesh)
+    call atlas_mesh_to_fesom_mesh(mesh_obj, zbar_default, partit, mesh)
+    deallocate(zbar_default)
 
     ! Store mesh for later use by compute_tracer_stats_atlas
     atlas_mesh_global = mesh_obj
@@ -204,15 +219,12 @@ contains
   !!          standard mesh computation routines (mesh_areas,
   !!          mesh_auxiliary_arrays).
   !! @param[inout] atlas_msh  Atlas mesh object (RegularLonLat or similar)
-  !! @param[in]    nl         Number of vertical levels (interfaces)
-  !! @param[in]    max_depth  Flat-bottom depth (positive metres)
+  !! @param[in]    zbar       Vertical interface depths
   !! @param[inout] partit     FESOM partition structure (filled for npes=1)
   !! @param[inout] mesh3      Output FESOM t_mesh (must be uninitialised)
-  subroutine atlas_mesh_to_fesom_mesh(atlas_msh, nl, max_depth, n_owned_arg, partit, mesh3)
+  subroutine atlas_mesh_to_fesom_mesh(atlas_msh, zbar, partit, mesh3)
     type(atlas_Mesh),   intent(inout) :: atlas_msh
-    integer,            intent(in)    :: nl
-    real(kind=MP),      intent(in)    :: max_depth
-    integer,            intent(in)    :: n_owned_arg  ! >0: owned count from dist; 0: single-rank
+    real(kind=MP),      intent(in)    :: zbar(:)
     type(t_partit),     intent(inout) :: partit
     type(t_mesh),       intent(inout) :: mesh3
 
@@ -232,7 +244,7 @@ contains
     integer(ATLAS_KIND_IDX), pointer   :: conn_ncols(:)      ! (ncells)
 
     ! Mesh dimensions
-    integer :: nnodes, ncells, edge2D_local, edge2D_in_local
+    integer :: nnodes, ncells, nl, edge2D_local, edge2D_in_local
 
     ! Half-edge sorting arrays (3 per cell)
     integer :: n_hedges, i, j
@@ -261,50 +273,23 @@ contains
     atlas_cells = atlas_msh%cells()
     nnodes = int(atlas_nodes%size())
     ncells = int(atlas_cells%size())
+    nl = size(zbar)
 
-    global_index_field = atlas_nodes%global_index()
-    call global_index_field%data(global_index)
-    local_max_global_index = int(maxval(global_index))
-    call MPI_Allreduce(local_max_global_index, max_global_index, 1, MPI_INTEGER, &
-                       MPI_MAX, partit%MPI_COMM_FESOM, ierror)
-    allocate(node_owner(max_global_index), global_node_owner(max_global_index))
-    node_owner = huge(0)
-    do n = 1, nnodes
-      node_owner(int(global_index(n))) = partit%mype
-    end do
-    call MPI_Allreduce(node_owner, global_node_owner, max_global_index, MPI_INTEGER, &
-                       MPI_MIN, partit%MPI_COMM_FESOM, ierror)
-    allocate(atlas_node_owned(nnodes))
-    do n = 1, nnodes
-      atlas_node_owned(n) = global_node_owner(int(global_index(n))) == partit%mype
-    end do
-    deallocate(node_owner, global_node_owner)
-    call global_index_field%final()
-
-    flags_field = atlas_nodes%field('flags')
     ghost_field = atlas_nodes%ghost()
-    call flags_field%data(node_flags)
+    n_owned = 0
+    n_ghost = 0
     call ghost_field%data(node_ghost)
-    do n = 1, nnodes
-      if (atlas_node_owned(n)) then
-        node_flags(n) = ibclr(node_flags(n), 1)
-        node_ghost(n) = 0_c_int
+    do n=1, nnodes
+      if (node_ghost(n) == 0_c_int) then
+        n_owned = n_owned + 1
+        if (n_ghost > 0) then
+          STOP 'Atlas mesh has owned nodes after ghost nodes; fesom_mesh requires all owned nodes first'
+        end if
       else
-        node_flags(n) = ibset(node_flags(n), 1)
-        node_ghost(n) = 1_c_int
+        n_ghost = n_ghost + 1
       end if
     end do
-    call flags_field%final()
     call ghost_field%final()
-    deallocate(atlas_node_owned)
-
-    if (n_owned_arg > 0) then
-      n_owned = n_owned_arg
-    else
-      n_owned = nnodes
-    end if
-    n_ghost = nnodes - n_owned
-
     if (partit%mype == 0) then
       write(output_unit, '(A,I0,A,I0)') &
         '  atlas_mesh_to_fesom_mesh: nnodes=', nnodes, ', ncells=', ncells
@@ -347,21 +332,17 @@ contains
     end do
 
     ! ------------------------------------------------------------------
-    ! 4. Vertical structure (uniform, flat bottom)
+    ! 4. Vertical structure from aux3d.out, with a flat bottom
     ! ------------------------------------------------------------------
     mesh3%nl = nl
     allocate(mesh3%zbar(nl))
-    do k = 1, nl
-      mesh3%zbar(k) = -real(k-1, MP) * max_depth / real(nl-1, MP)
-    end do
+    mesh3%zbar = zbar
     allocate(mesh3%Z(nl-1))
-    do k = 1, nl-1
-      mesh3%Z(k) = 0.5_MP * (mesh3%zbar(k) + mesh3%zbar(k+1))
-    end do
+    mesh3%Z = 0.5_MP * (mesh3%zbar(1:nl-1) + mesh3%zbar(2:nl))
     allocate(mesh3%depth(nnodes))
-    mesh3%depth = -max_depth
+    mesh3%depth = mesh3%zbar(nl)
     allocate(mesh3%elem_depth(ncells))
-    mesh3%elem_depth = -max_depth
+    mesh3%elem_depth = mesh3%zbar(nl)
 
     ! ------------------------------------------------------------------
     ! 5. Build edges from element connectivity using half-edge sort
@@ -606,13 +587,18 @@ contains
     real(WP) :: tmin_wp, tmax_wp, tsum_wp
     integer :: node_count
 
+
     fs = atlas_functionspace_NodeColumns(atlas_mesh_global)
     tracer_field = fs%create_field(name='tracer', kind=atlas_real(WP), &
                                    levels=size(tracer_data, 1))
     call tracer_field%data(atlas_tracer)
     node_count = min(size(atlas_tracer, 2), size(tracer_data, 2))
+    if (n_owned > node_count) then
+      error stop 'compute_tracer_stats_atlas: owned-node count exceeds field size'
+    end if
+
     atlas_tracer = 0.0_WP
-    atlas_tracer(:, 1:node_count) = tracer_data(:, 1:node_count)
+    atlas_tracer(:, 1:n_owned) = tracer_data(:, 1:n_owned)
 
     call fs%minimum(tracer_field, tmin_wp)
     call fs%maximum(tracer_field, tmax_wp)

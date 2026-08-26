@@ -301,6 +301,8 @@ FESOM_PLUGIN_SOURCE="${DEPS_DIR}/atlas-fesom"
 if [ ! -d "$FESOM_PLUGIN_SOURCE" ]; then
     echo "Cloning atlas-fesom from GitHub..."
     git clone https://github.com/ecmwf/atlas-fesom.git "$FESOM_PLUGIN_SOURCE" 2>&1 | tail -5
+    cd atlas-fesom
+    git checkout fix/ghost
 else
     echo "atlas-fesom source already present"
 fi

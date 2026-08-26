@@ -20,6 +20,10 @@
 - Atlas tracer statistics now mark overlapping local nodes as ghosts by global
 	node index and use `NodeColumns` field reductions, making min/max/sum
 	diagnostics independent of rank count.
+- Atlas mesh initialization now reads the complete vertical profile from
+	`aux3d.out`, matching the file-based mesh's tracer layer count and sums.
+- Standalone CMake builds now stage `tests/data` in the build directory for
+	consistent mesh-initialization runs.
 
 # Changelog
 
