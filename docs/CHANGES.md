@@ -13,6 +13,9 @@
 
 ## Fixed
 
+- Atlas mesh conversion now uses `atlas_build_edges` and Atlas edge-to-node and
+	edge-to-cell connectivity instead of constructing topology with a custom
+	half-edge sort. Canonical FESOM edge ordering is retained for reproducibility.
 - `ATLAS_USE_FESOM_DIST=1` now constructs the Atlas distribution from owned
 	nodes in `my_list*.out` instead of incorrectly treating `rpart.out` counts as
 	contiguous global-node ranges. Both Atlas distribution modes and standard

@@ -75,7 +75,6 @@ contains
     type(atlas_GridDistribution) :: dist_obj
 
     integer :: io_stat
-    character(len=64)  :: env_value
     character(len=32)  :: use_fesom_dist_str
     character(len=10)  :: npes_string
     character(len=256) :: dist_mesh_dir, rpart_file, owner_file
@@ -85,7 +84,6 @@ contains
     real(kind=MP), allocatable :: zbar_default(:)
     type(atlas_mesh_Nodes) :: mesh_nodes_obj
     type(atlas_mesh_Cells) :: mesh_cells_obj
-    type(atlas_mesh_Cells), pointer :: mesh_obj_cells
     type(atlas_functionspace_NodeColumns) :: fs_dummy
     ! Partition file variables
     integer :: funit, r, node_idx, npes_in_file, error_status, ierror
@@ -257,9 +255,9 @@ contains
 
 #ifdef ENABLE_ATLAS
   !> @brief Convert an Atlas mesh to a FESOM t_mesh
-  !! @details Extracts node coordinates (lon/lat) and triangle connectivity
-  !!          from atlas_msh, builds the full FESOM t_mesh topology (edges,
-  !!          elem_edges, level arrays, partition arrays) and calls the
+  !! @details Extracts node coordinates and triangle connectivity, asks Atlas
+  !!          to build edge topology, maps it into the FESOM t_mesh arrays,
+  !!          builds level and partition arrays, and calls the
   !!          standard mesh computation routines (mesh_areas,
   !!          mesh_auxiliary_arrays).
   !! @param[inout] atlas_msh  Atlas mesh object (RegularLonLat or similar)
@@ -275,14 +273,17 @@ contains
     ! Atlas helper objects
     type(atlas_mesh_Nodes)             :: atlas_nodes
     type(atlas_mesh_Cells)             :: atlas_cells
+    type(atlas_mesh_Edges)             :: atlas_edges
+    type(atlas_MultiBlockConnectivity) :: atlas_edge_nodes
+    type(atlas_MultiBlockConnectivity) :: atlas_edge_cells
     type(atlas_Field)                  :: node_global_index_field
     type(atlas_Field)                  :: cell_global_index_field
-    type(atlas_Field)                  :: flags_field
     type(atlas_Field)                  :: ghost_field
     integer(ATLAS_KIND_GIDX), pointer  :: node_global_index(:)
     integer(ATLAS_KIND_GIDX), pointer  :: cell_global_index(:)
-    integer(c_int), pointer            :: node_flags(:)
     integer(c_int), pointer            :: node_ghost(:)
+    integer(ATLAS_KIND_IDX), pointer   :: edge_nodes(:,:), edge_node_cols(:)
+    integer(ATLAS_KIND_IDX), pointer   :: edge_cells(:,:), edge_cell_cols(:)
 
     ! Mesh dimensions
     integer :: nnodes, ncells, nl, edge2D_local, edge2D_in_local
@@ -290,26 +291,21 @@ contains
     integer :: local_global_ncells, file_unit, edge_file_unit, edge_tri_file_unit, io_stat
     integer :: global_edge_count, global_internal_edge_count, global_edge_id, canonical_node_count
     integer, allocatable :: global_node_levels(:), global_cell_levels(:)
-    integer, allocatable :: canonical_node_flags(:)
     integer, allocatable :: canonical_elements(:,:), canonical_edges(:,:), canonical_edge_tri(:,:)
     real(kind=MP), allocatable :: canonical_lonlat(:,:)
 
-    ! Half-edge sorting arrays (3 per cell)
-    integer :: n_hedges, i, j, canonical_cell_count, global_node_id
-    integer, allocatable :: he_lo(:), he_hi(:), he_el(:)
-    integer :: tmp_lo, tmp_hi, tmp_el, tmp_lk, n_lo, n_hi
+    integer :: i, j, canonical_cell_count, global_node_id, canonical_node_flag
+    integer :: tmp_el
 
     ! Edge classification
-    integer :: edge_count, n_internal, n_boundary, eidx
+    integer :: n_internal, eidx
     integer, allocatable :: edge_perm(:), edge_order(:), edge_global_ids(:), aux(:)
     integer :: e, n, k, q, e1
     integer :: elnodes(3), eledges(3)
     real(kind=WP) :: geographic_lon, geographic_lat, rotated_lon, rotated_lat
 
     ! Owned vs ghost node split
-    integer :: n_owned, n_ghost, max_global_index, local_max_global_index, ierror
-    integer, allocatable :: node_owner(:), global_node_owner(:)
-    logical, allocatable :: atlas_node_owned(:)
+    integer :: n_owned, n_ghost, ierror
 
     real(MP), parameter :: deg2rad = acos(-1.0_MP) / 180.0_MP
 
@@ -356,9 +352,8 @@ contains
     read(file_unit, *, iostat=io_stat) canonical_node_count
     if (io_stat /= 0) error stop 'Cannot read nod2d.out header for Atlas mesh'
     allocate(canonical_lonlat(2, canonical_node_count))
-    allocate(canonical_node_flags(canonical_node_count))
     do n = 1, canonical_node_count
-      read(file_unit, *, iostat=io_stat) i, canonical_lonlat(:, n), canonical_node_flags(n)
+      read(file_unit, *, iostat=io_stat) i, canonical_lonlat(:, n), canonical_node_flag
       if (io_stat /= 0 .or. i /= n) error stop 'Cannot read nod2d.out for Atlas mesh'
     end do
     close(file_unit)
@@ -378,7 +373,7 @@ contains
         mesh3%coord_nod2D(2, n) = real(geographic_lat, MP)
       end if
     end do
-    deallocate(canonical_lonlat, canonical_node_flags)
+    deallocate(canonical_lonlat)
 
     ! ------------------------------------------------------------------
     ! 3. Cell connectivity in canonical FESOM vertex order
@@ -428,52 +423,22 @@ contains
     mesh3%elem_depth = mesh3%zbar(nl)
 
     ! ------------------------------------------------------------------
-    ! 5. Build edges from element connectivity using half-edge sort
-    !    Local edges of triangle (n1,n2,n3):
-    !      k=1: (n1,n2)   k=2: (n2,n3)   k=3: (n1,n3)
+    ! 5. Build edge topology with Atlas
     ! ------------------------------------------------------------------
-    n_hedges = 3 * ncells
-    allocate(he_lo(n_hedges), he_hi(n_hedges), he_el(n_hedges))
+    call atlas_build_edges(atlas_msh)
+    atlas_edges = atlas_msh%edges()
+    atlas_edge_nodes = atlas_edges%node_connectivity()
+    atlas_edge_cells = atlas_edges%cell_connectivity()
+    call atlas_edge_nodes%padded_data(edge_nodes, edge_node_cols)
+    call atlas_edge_cells%padded_data(edge_cells, edge_cell_cols)
 
-    do e = 1, ncells
-      do k = 1, 3
-        select case(k)
-        case(1); n_lo = mesh3%elem2D_nodes(1,e); n_hi = mesh3%elem2D_nodes(2,e)
-        case(2); n_lo = mesh3%elem2D_nodes(2,e); n_hi = mesh3%elem2D_nodes(3,e)
-        case(3); n_lo = mesh3%elem2D_nodes(1,e); n_hi = mesh3%elem2D_nodes(3,e)
-        end select
-        i = (e-1)*3 + k
-        he_lo(i) = min(n_lo, n_hi)
-        he_hi(i) = max(n_lo, n_hi)
-        he_el(i) = e
-      end do
-    end do
-
-    ! Insertion sort on (he_lo, he_hi) — O(n^2), fine for test-case sizes
-    do i = 2, n_hedges
-      tmp_lo = he_lo(i); tmp_hi = he_hi(i); tmp_el = he_el(i)
-      j = i - 1
-      do while (j >= 1 .and. &
-                (he_lo(j) > tmp_lo .or. &
-                 (he_lo(j) == tmp_lo .and. he_hi(j) > tmp_hi)))
-        he_lo(j+1) = he_lo(j); he_hi(j+1) = he_hi(j); he_el(j+1) = he_el(j)
-        j = j - 1
-      end do
-      he_lo(j+1) = tmp_lo; he_hi(j+1) = tmp_hi; he_el(j+1) = tmp_el
-    end do
-
-    ! Count total / internal / boundary edges
-    edge_count = 0; n_internal = 0; n_boundary = 0
-    i = 1
-    do while (i <= n_hedges)
-      edge_count = edge_count + 1
-      if (i < n_hedges .and. he_lo(i)==he_lo(i+1) .and. he_hi(i)==he_hi(i+1)) then
-        n_internal = n_internal + 1; i = i + 2
-      else
-        n_boundary = n_boundary + 1; i = i + 1
+    edge2D_local = int(atlas_edges%size())
+    n_internal = 0
+    do e = 1, edge2D_local
+      if (edge_cell_cols(e) == 2 .and. edge_cells(2, e) > 0) then
+        n_internal = n_internal + 1
       end if
     end do
-    edge2D_local   = edge_count
     edge2D_in_local = n_internal
 
     ! Match Atlas-local edges to the canonical FESOM edge sequence.
@@ -504,27 +469,19 @@ contains
 
     ! Build permutation in canonical global edge order.
     allocate(edge_global_ids(edge2D_local))
-    edge_count = 0
-    i = 1
-    do while (i <= n_hedges)
-      edge_count = edge_count + 1
-      edge_global_ids(edge_count) = 0
+    do e = 1, edge2D_local
+      edge_global_ids(e) = 0
       do global_edge_id = 1, global_edge_count
-        if ((int(node_global_index(he_lo(i))) == canonical_edges(1, global_edge_id) .and. &
-             int(node_global_index(he_hi(i))) == canonical_edges(2, global_edge_id)) .or. &
-            (int(node_global_index(he_lo(i))) == canonical_edges(2, global_edge_id) .and. &
-             int(node_global_index(he_hi(i))) == canonical_edges(1, global_edge_id))) then
-          edge_global_ids(edge_count) = global_edge_id
+        if ((int(node_global_index(edge_nodes(1, e))) == canonical_edges(1, global_edge_id) .and. &
+             int(node_global_index(edge_nodes(2, e))) == canonical_edges(2, global_edge_id)) .or. &
+            (int(node_global_index(edge_nodes(1, e))) == canonical_edges(2, global_edge_id) .and. &
+             int(node_global_index(edge_nodes(2, e))) == canonical_edges(1, global_edge_id))) then
+          edge_global_ids(e) = global_edge_id
           exit
         end if
       end do
-      if (edge_global_ids(edge_count) == 0) then
+      if (edge_global_ids(e) == 0) then
         error stop 'Atlas edge is absent from canonical FESOM edge list'
-      end if
-      if (i < n_hedges .and. he_lo(i)==he_lo(i+1) .and. he_hi(i)==he_hi(i+1)) then
-        i = i + 2
-      else
-        i = i + 1
       end if
     end do
 
@@ -550,32 +507,31 @@ contains
     allocate(mesh3%elem_edges(3, ncells))
     mesh3%elem_edges = 0
 
-    edge_count = 0
-    i = 1
-    do while (i <= n_hedges)
-      edge_count = edge_count + 1
-      n = edge_perm(edge_count)
-      global_edge_id = edge_global_ids(edge_count)
-      if (int(node_global_index(he_lo(i))) == canonical_edges(1, global_edge_id)) then
-        mesh3%edges(1,n) = he_lo(i); mesh3%edges(2,n) = he_hi(i)
+    do e = 1, edge2D_local
+      n = edge_perm(e)
+      global_edge_id = edge_global_ids(e)
+      if (int(node_global_index(edge_nodes(1, e))) == canonical_edges(1, global_edge_id)) then
+        mesh3%edges(:, n) = int(edge_nodes(:, e))
       else
-        mesh3%edges(1,n) = he_hi(i); mesh3%edges(2,n) = he_lo(i)
+        mesh3%edges(1, n) = int(edge_nodes(2, e))
+        mesh3%edges(2, n) = int(edge_nodes(1, e))
       end if
-      if (i < n_hedges .and. he_lo(i)==he_lo(i+1) .and. he_hi(i)==he_hi(i+1)) then
-        if (int(cell_global_index(he_el(i))) == canonical_edge_tri(1, global_edge_id)) then
-          mesh3%edge_tri(1,n) = he_el(i); mesh3%edge_tri(2,n) = he_el(i+1)
-        else if (int(cell_global_index(he_el(i))) == canonical_edge_tri(2, global_edge_id)) then
-          mesh3%edge_tri(1,n) = he_el(i+1); mesh3%edge_tri(2,n) = he_el(i)
+
+      if (edge_cell_cols(e) == 2 .and. edge_cells(2, e) > 0) then
+        if (int(cell_global_index(edge_cells(1, e))) == canonical_edge_tri(1, global_edge_id)) then
+          mesh3%edge_tri(:, n) = int(edge_cells(:, e))
+        else if (int(cell_global_index(edge_cells(2, e))) == canonical_edge_tri(1, global_edge_id)) then
+          mesh3%edge_tri(1, n) = int(edge_cells(2, e))
+          mesh3%edge_tri(2, n) = int(edge_cells(1, e))
         else
           error stop 'Atlas edge cells disagree with canonical FESOM edge list'
         end if
-        i = i + 2
       else
-        mesh3%edge_tri(1,n) = he_el(i); mesh3%edge_tri(2,n) = 0
-        i = i + 1
+        mesh3%edge_tri(1, n) = int(edge_cells(1, e))
+        mesh3%edge_tri(2, n) = 0
       end if
     end do
-    deallocate(he_lo, he_hi, he_el, edge_perm)
+    deallocate(edge_perm)
     deallocate(canonical_edges, canonical_edge_tri)
 
     mesh3%edge2D    = edge2D_local
