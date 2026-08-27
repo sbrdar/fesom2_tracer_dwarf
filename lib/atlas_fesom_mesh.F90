@@ -644,7 +644,7 @@ contains
     integer :: node_count
 
 
-    fs = atlas_functionspace_NodeColumns(atlas_mesh_global)
+    fs = atlas_functionspace_NodeColumns(atlas_mesh_global,halo=2)
     tracer_field = fs%create_field(name='tracer', kind=atlas_real(WP), &
                                    levels=size(tracer_data, 1))
     call tracer_field%data(atlas_tracer)
