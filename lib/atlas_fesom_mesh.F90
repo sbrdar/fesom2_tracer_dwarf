@@ -655,7 +655,6 @@ contains
 
     atlas_tracer = 0.0_WP
     atlas_tracer(:, 1:n_owned) = tracer_data(:, 1:n_owned)
-    call fs%halo_exchange(tracer_field)
 
     call fs%minimum(tracer_field, tmin_wp)
     call fs%maximum(tracer_field, tmax_wp)
