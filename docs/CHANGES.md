@@ -13,6 +13,15 @@
 
 ## Fixed
 
+- `ATLAS_USE_FESOM_DIST=1` now constructs the Atlas distribution from owned
+	nodes in `my_list*.out` instead of incorrectly treating `rpart.out` counts as
+	contiguous global-node ranges. Both Atlas distribution modes and standard
+	FESOM now produce identical statistics at every tracer step.
+- Atlas tracer sums now use `order_independent_sum`, removing partition-order
+	differences from diagnostic reductions.
+- Atlas mesh conversion now orders and orients local edges using the canonical
+	`edges.out` and `edge_tri.out` global sequence. Eight-rank Atlas and
+	file-based runs now print identical min/max/sum values at every tracer step.
 - Atlas tracer statistics now halo-fill temporary fields before reductions, so
 	zero-initialized ghost slots cannot produce a false minimum for positive fields.
 - Atlas mesh conversion now maps `nlvls.out` and `elvls.out` onto local nodes
@@ -20,10 +29,9 @@
 	per-step tracer results.
 - Tracer flux-divergence updates now use the guarded inverse control-volume
 	area, avoiding `0/0` and NaNs at zero-area nodes in distributed Atlas meshes.
-- Atlas mesh conversion now uses the Fortran API's one-based connectivity
-	directly and applies the configured coordinate rotation before computing
-	geometry. Atlas and file-based `fesom-pi` meshes now produce matching area
-	diagnostics.
+- Atlas mesh conversion now maps canonical `nod2d.out` coordinates and
+	`elem2d.out` connectivity by Atlas global index, then applies the configured
+	coordinate rotation before computing geometry.
 - Atlas tracer statistics now mark overlapping local nodes as ghosts by global
 	node index and use `NodeColumns` field reductions, making min/max/sum
 	diagnostics independent of rank count.

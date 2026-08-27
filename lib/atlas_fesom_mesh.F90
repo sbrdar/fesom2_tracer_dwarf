@@ -21,7 +21,7 @@ module atlas_fesom_mesh_module
   use mpi
 #ifdef ENABLE_ATLAS
   use atlas_module
-  use, intrinsic :: iso_c_binding, only: c_double, c_int
+  use, intrinsic :: iso_c_binding, only: c_int
 #endif
 
   implicit none
@@ -58,25 +58,6 @@ contains
 
     call field%final()
     call fs%final()
-
-#if 0
-    fs%create_field(name='fesom_nodal_exchange', kind=atlas_real(WP), &
-                            levels=size(nodal_data, 1))
-
-
-
-    field = fs%create_field(name='fesom_nodal_exchange', kind=atlas_real(WP), &
-                            levels=size(nodal_data, 1))
-    call field%data(field_data)
-    if (size(field_data, 2) /= size(nodal_data, 2)) then
-      error stop 'atlas_halo_exchange_nodal: incompatible node count'
-    end if
-    field_data = nodal_data
-    call fs%halo_exchange(field)
-    nodal_data = field_data
-    call field%final()
-    call fs%final()
-#endif
 #endif
   end subroutine atlas_halo_exchange_nodal
 
@@ -97,7 +78,8 @@ contains
     character(len=64)  :: env_value
     character(len=32)  :: use_fesom_dist_str
     character(len=10)  :: npes_string
-    character(len=256) :: dist_mesh_dir, rpart_file
+    character(len=256) :: dist_mesh_dir, rpart_file, owner_file
+    character(len=5) :: rank_string
     integer :: ncells, nnodes
     integer :: nl_default, ncells_shrinked
     real(kind=MP), allocatable :: zbar_default(:)
@@ -107,7 +89,8 @@ contains
     type(atlas_functionspace_NodeColumns) :: fs_dummy
     ! Partition file variables
     integer :: funit, r, node_idx, npes_in_file, error_status, ierror
-    integer, allocatable :: part_csr(:), part_per_node(:)
+    integer :: file_rank, owned_count, ghost_count
+    integer, allocatable :: part_csr(:), part_per_node(:), local_node_list(:)
     logical :: have_dist
 
     ! Use sensible defaults for fesom-pi grid
@@ -152,9 +135,9 @@ contains
     grid_obj = atlas_Grid("fesom-pi")
     write(output_unit, *) '  --> Atlas fesom-pi grid found: ', grid_obj%name()
 
-    ! Optionally drive Atlas mesh distribution from the standard rpart.out file.
-    ! Set ATLAS_USE_FESOM_DIST=1 to enable; the file is read from the same
-    ! dist_<npes>/ directory as the non-Atlas mesh_setup() path.
+    ! Optionally drive Atlas mesh distribution from the standard FESOM owner lists.
+    ! Set ATLAS_USE_FESOM_DIST=1 to enable; rpart.out and my_list*.out are read
+    ! from the same dist_<npes>/ directory as the non-Atlas mesh_setup() path.
     have_dist = .false.
     call get_environment_variable('ATLAS_USE_FESOM_DIST', use_fesom_dist_str, &
                                   status=io_stat)
@@ -194,15 +177,31 @@ contains
         end if
       end if
       if (error_status == 0) then
-        ! Convert CSR (1-based offsets) to per-point 0-based partition indices
-        ! part_csr(r)..part_csr(r+1)-1 are node global indices for rank r-1
         allocate(part_per_node(int(grid_obj%size())))
-        do r = 1, partit%npes
-          do node_idx = part_csr(r), part_csr(r+1) - 1
-            part_per_node(node_idx) = r - 1   ! 0-based partition index for Atlas
+        part_per_node = -1
+        if (partit%mype == 0) then
+          do r = 0, partit%npes - 1
+            write(rank_string, '(I5.5)') r
+            owner_file = trim(dist_mesh_dir)//'my_list'//rank_string//'.out'
+            open(newunit=funit, file=trim(owner_file), action='read', status='old', &
+                 iostat=io_stat)
+            if (io_stat /= 0) error stop 'Cannot open FESOM partition owner list'
+            read(funit, *) file_rank
+            read(funit, *) owned_count
+            read(funit, *) ghost_count
+            if (file_rank /= r) error stop 'Unexpected rank in FESOM partition owner list'
+            allocate(local_node_list(owned_count + ghost_count))
+            read(funit, *) local_node_list
+            close(funit)
+            do node_idx = 1, owned_count
+              part_per_node(local_node_list(node_idx)) = r
+            end do
+            deallocate(local_node_list)
           end do
-        end do
-        ! owned-node count for this rank: part_csr(mype+1) .. part_csr(mype+2)-1
+          if (any(part_per_node < 0)) error stop 'Incomplete FESOM node ownership map'
+        end if
+        call MPI_BCast(part_per_node, int(grid_obj%size()), MPI_INTEGER, 0, &
+                       partit%MPI_COMM_FESOM, ierror)
         deallocate(part_csr)
         dist_obj   = atlas_GridDistribution(part_per_node)
         deallocate(part_per_node)
@@ -276,35 +275,33 @@ contains
     ! Atlas helper objects
     type(atlas_mesh_Nodes)             :: atlas_nodes
     type(atlas_mesh_Cells)             :: atlas_cells
-    type(atlas_Field)                  :: lonlat_field
     type(atlas_Field)                  :: node_global_index_field
     type(atlas_Field)                  :: cell_global_index_field
     type(atlas_Field)                  :: flags_field
     type(atlas_Field)                  :: ghost_field
-    type(atlas_MultiBlockConnectivity) :: atlas_conn
-    real(c_double), pointer            :: lonlat(:,:)        ! (2, nnodes) degrees
     integer(ATLAS_KIND_GIDX), pointer  :: node_global_index(:)
     integer(ATLAS_KIND_GIDX), pointer  :: cell_global_index(:)
     integer(c_int), pointer            :: node_flags(:)
     integer(c_int), pointer            :: node_ghost(:)
-    integer(ATLAS_KIND_IDX), pointer   :: conn_padded(:,:)   ! (3, ncells)  1-based
-    integer(ATLAS_KIND_IDX), pointer   :: conn_ncols(:)      ! (ncells)
 
     ! Mesh dimensions
     integer :: nnodes, ncells, nl, edge2D_local, edge2D_in_local
     integer :: global_nnodes, global_ncells, local_global_nnodes
-    integer :: local_global_ncells, file_unit, io_stat
+    integer :: local_global_ncells, file_unit, edge_file_unit, edge_tri_file_unit, io_stat
+    integer :: global_edge_count, global_internal_edge_count, global_edge_id, canonical_node_count
     integer, allocatable :: global_node_levels(:), global_cell_levels(:)
+    integer, allocatable :: canonical_node_flags(:)
+    integer, allocatable :: canonical_elements(:,:), canonical_edges(:,:), canonical_edge_tri(:,:)
+    real(kind=MP), allocatable :: canonical_lonlat(:,:)
 
     ! Half-edge sorting arrays (3 per cell)
-    integer :: n_hedges, i, j
+    integer :: n_hedges, i, j, canonical_cell_count, global_node_id
     integer, allocatable :: he_lo(:), he_hi(:), he_el(:)
     integer :: tmp_lo, tmp_hi, tmp_el, tmp_lk, n_lo, n_hi
 
     ! Edge classification
     integer :: edge_count, n_internal, n_boundary, eidx
-    logical, allocatable :: edge_is_boundary(:)
-    integer, allocatable :: edge_perm(:), aux(:)
+    integer, allocatable :: edge_perm(:), edge_order(:), edge_global_ids(:), aux(:)
     integer :: e, n, k, q, e1
     integer :: elnodes(3), eledges(3)
     real(kind=WP) :: geographic_lon, geographic_lat, rotated_lon, rotated_lat
@@ -324,6 +321,11 @@ contains
     nnodes = int(atlas_nodes%size())
     ncells = int(atlas_cells%size())
     nl = size(zbar)
+
+    node_global_index_field = atlas_nodes%global_index()
+    cell_global_index_field = atlas_cells%global_index()
+    call node_global_index_field%data(node_global_index)
+    call cell_global_index_field%data(cell_global_index)
 
     ghost_field = atlas_nodes%ghost()
     n_owned = 0
@@ -346,16 +348,27 @@ contains
     end if
 
     ! ------------------------------------------------------------------
-    ! 2. Node coordinates: lon/lat degrees -> radians -> coord_nod2D
+    ! 2. Canonical node coordinates: lon/lat degrees -> radians
     ! ------------------------------------------------------------------
-    lonlat_field = atlas_nodes%lonlat()
-    call lonlat_field%data(lonlat)   ! lonlat(1,n)=lon, lonlat(2,n)=lat [degrees]
+    open(newunit=file_unit, file=trim(MeshPath)//'nod2d.out', &
+         status='old', action='read', iostat=io_stat)
+    if (io_stat /= 0) error stop 'Cannot open nod2d.out for Atlas mesh'
+    read(file_unit, *, iostat=io_stat) canonical_node_count
+    if (io_stat /= 0) error stop 'Cannot read nod2d.out header for Atlas mesh'
+    allocate(canonical_lonlat(2, canonical_node_count))
+    allocate(canonical_node_flags(canonical_node_count))
+    do n = 1, canonical_node_count
+      read(file_unit, *, iostat=io_stat) i, canonical_lonlat(:, n), canonical_node_flags(n)
+      if (io_stat /= 0 .or. i /= n) error stop 'Cannot read nod2d.out for Atlas mesh'
+    end do
+    close(file_unit)
+
     mesh3%nod2D = nnodes
     allocate(mesh3%coord_nod2D(2, nnodes))
     call set_mesh_transform_matrix()
     do n = 1, nnodes
-      geographic_lon = real(real(lonlat(1, n), MP) * deg2rad, WP)
-      geographic_lat = real(real(lonlat(2, n), MP) * deg2rad, WP)
+      geographic_lon = real(canonical_lonlat(1, int(node_global_index(n))) * deg2rad, WP)
+      geographic_lat = real(canonical_lonlat(2, int(node_global_index(n))) * deg2rad, WP)
       if (force_rotation) then
         call g2r(geographic_lon, geographic_lat, rotated_lon, rotated_lat)
         mesh3%coord_nod2D(1, n) = real(rotated_lon, MP)
@@ -365,21 +378,41 @@ contains
         mesh3%coord_nod2D(2, n) = real(geographic_lat, MP)
       end if
     end do
-    call lonlat_field%final()
+    deallocate(canonical_lonlat, canonical_node_flags)
 
     ! ------------------------------------------------------------------
-    ! 3. Cell connectivity: Atlas Fortran indices are already 1-based
+    ! 3. Cell connectivity in canonical FESOM vertex order
     ! ------------------------------------------------------------------
-    atlas_conn = atlas_cells%node_connectivity()
-    call atlas_conn%padded_data(conn_padded, conn_ncols)
-    ! conn_padded(k, e): k-th node of element e, 1-based; shape (3, ncells)
+    open(newunit=file_unit, file=trim(MeshPath)//'elem2d.out', &
+         status='old', action='read', iostat=io_stat)
+    if (io_stat /= 0) error stop 'Cannot open elem2d.out for Atlas mesh'
+    read(file_unit, *, iostat=io_stat) canonical_cell_count
+    if (io_stat /= 0) error stop 'Cannot read elem2d.out header for Atlas mesh'
+    allocate(canonical_elements(3, canonical_cell_count))
+    do e = 1, canonical_cell_count
+      read(file_unit, *, iostat=io_stat) canonical_elements(:, e)
+      if (io_stat /= 0) error stop 'Cannot read elem2d.out for Atlas mesh'
+    end do
+    close(file_unit)
+
     mesh3%elem2D = ncells
     allocate(mesh3%elem2D_nodes(3, ncells))
     do e = 1, ncells
       do k = 1, 3
-        mesh3%elem2D_nodes(k, e) = int(conn_padded(k, e))
+        global_node_id = canonical_elements(k, int(cell_global_index(e)))
+        mesh3%elem2D_nodes(k, e) = 0
+        do n = 1, nnodes
+          if (int(node_global_index(n)) == global_node_id) then
+            mesh3%elem2D_nodes(k, e) = n
+            exit
+          end if
+        end do
+        if (mesh3%elem2D_nodes(k, e) == 0) then
+          error stop 'Canonical FESOM cell references a node absent from Atlas mesh'
+        end if
       end do
     end do
+    deallocate(canonical_elements)
 
     ! ------------------------------------------------------------------
     ! 4. Vertical structure from aux3d.out, with a flat bottom
@@ -443,25 +476,72 @@ contains
     edge2D_local   = edge_count
     edge2D_in_local = n_internal
 
-    ! Build permutation: internal edges first, boundary edges last
-    allocate(edge_is_boundary(edge2D_local))
+    ! Match Atlas-local edges to the canonical FESOM edge sequence.
+    open(newunit=edge_file_unit, file=trim(MeshPath)//'edgenum.out', &
+         status='old', action='read', iostat=io_stat)
+    if (io_stat /= 0) error stop 'Cannot open edgenum.out for Atlas mesh'
+    read(edge_file_unit, *, iostat=io_stat) global_edge_count
+    read(edge_file_unit, *, iostat=io_stat) global_internal_edge_count
+    close(edge_file_unit)
+    if (io_stat /= 0) error stop 'Cannot read edgenum.out for Atlas mesh'
+
+    allocate(canonical_edges(2, global_edge_count))
+    allocate(canonical_edge_tri(2, global_edge_count))
+    open(newunit=edge_file_unit, file=trim(MeshPath)//'edges.out', &
+         status='old', action='read', iostat=io_stat)
+    if (io_stat /= 0) error stop 'Cannot open edges.out for Atlas mesh'
+    open(newunit=edge_tri_file_unit, file=trim(MeshPath)//'edge_tri.out', &
+         status='old', action='read', iostat=io_stat)
+    if (io_stat /= 0) error stop 'Cannot open edge_tri.out for Atlas mesh'
+    do n = 1, global_edge_count
+      read(edge_file_unit, *, iostat=io_stat) canonical_edges(:, n)
+      if (io_stat /= 0) error stop 'Cannot read edges.out for Atlas mesh'
+      read(edge_tri_file_unit, *, iostat=io_stat) canonical_edge_tri(:, n)
+      if (io_stat /= 0) error stop 'Cannot read edge_tri.out for Atlas mesh'
+    end do
+    close(edge_file_unit)
+    close(edge_tri_file_unit)
+
+    ! Build permutation in canonical global edge order.
+    allocate(edge_global_ids(edge2D_local))
     edge_count = 0
     i = 1
     do while (i <= n_hedges)
       edge_count = edge_count + 1
+      edge_global_ids(edge_count) = 0
+      do global_edge_id = 1, global_edge_count
+        if ((int(node_global_index(he_lo(i))) == canonical_edges(1, global_edge_id) .and. &
+             int(node_global_index(he_hi(i))) == canonical_edges(2, global_edge_id)) .or. &
+            (int(node_global_index(he_lo(i))) == canonical_edges(2, global_edge_id) .and. &
+             int(node_global_index(he_hi(i))) == canonical_edges(1, global_edge_id))) then
+          edge_global_ids(edge_count) = global_edge_id
+          exit
+        end if
+      end do
+      if (edge_global_ids(edge_count) == 0) then
+        error stop 'Atlas edge is absent from canonical FESOM edge list'
+      end if
       if (i < n_hedges .and. he_lo(i)==he_lo(i+1) .and. he_hi(i)==he_hi(i+1)) then
-        edge_is_boundary(edge_count) = .false.; i = i + 2
+        i = i + 2
       else
-        edge_is_boundary(edge_count) = .true.;  i = i + 1
+        i = i + 1
       end if
     end do
-    allocate(edge_perm(edge2D_local))
-    eidx = 0
-    do n = 1, edge2D_local
-      if (.not. edge_is_boundary(n)) then; eidx = eidx + 1; edge_perm(n) = eidx; end if
+
+    allocate(edge_order(edge2D_local))
+    edge_order = [(n, n=1, edge2D_local)]
+    do i = 2, edge2D_local
+      eidx = edge_order(i)
+      j = i - 1
+      do while (j >= 1 .and. edge_global_ids(edge_order(j)) > edge_global_ids(eidx))
+        edge_order(j+1) = edge_order(j)
+        j = j - 1
+      end do
+      edge_order(j+1) = eidx
     end do
+    allocate(edge_perm(edge2D_local))
     do n = 1, edge2D_local
-      if (edge_is_boundary(n))      then; eidx = eidx + 1; edge_perm(n) = eidx; end if
+      edge_perm(edge_order(n)) = n
     end do
 
     ! Fill mesh3%edges and mesh3%edge_tri using permuted indices
@@ -475,17 +555,28 @@ contains
     do while (i <= n_hedges)
       edge_count = edge_count + 1
       n = edge_perm(edge_count)
+      global_edge_id = edge_global_ids(edge_count)
+      if (int(node_global_index(he_lo(i))) == canonical_edges(1, global_edge_id)) then
+        mesh3%edges(1,n) = he_lo(i); mesh3%edges(2,n) = he_hi(i)
+      else
+        mesh3%edges(1,n) = he_hi(i); mesh3%edges(2,n) = he_lo(i)
+      end if
       if (i < n_hedges .and. he_lo(i)==he_lo(i+1) .and. he_hi(i)==he_hi(i+1)) then
-        mesh3%edges(1,n) = he_lo(i);    mesh3%edges(2,n) = he_hi(i)
-        mesh3%edge_tri(1,n) = he_el(i); mesh3%edge_tri(2,n) = he_el(i+1)
+        if (int(cell_global_index(he_el(i))) == canonical_edge_tri(1, global_edge_id)) then
+          mesh3%edge_tri(1,n) = he_el(i); mesh3%edge_tri(2,n) = he_el(i+1)
+        else if (int(cell_global_index(he_el(i))) == canonical_edge_tri(2, global_edge_id)) then
+          mesh3%edge_tri(1,n) = he_el(i+1); mesh3%edge_tri(2,n) = he_el(i)
+        else
+          error stop 'Atlas edge cells disagree with canonical FESOM edge list'
+        end if
         i = i + 2
       else
-        mesh3%edges(1,n) = he_lo(i);    mesh3%edges(2,n) = he_hi(i)
         mesh3%edge_tri(1,n) = he_el(i); mesh3%edge_tri(2,n) = 0
         i = i + 1
       end if
     end do
-    deallocate(he_lo, he_hi, he_el, edge_is_boundary, edge_perm)
+    deallocate(he_lo, he_hi, he_el, edge_perm)
+    deallocate(canonical_edges, canonical_edge_tri)
 
     mesh3%edge2D    = edge2D_local
     mesh3%edge2D_in = edge2D_in_local
@@ -527,11 +618,18 @@ contains
     partit%myDim_edge2D = edge2D_local; partit%eDim_edge2D  = 0
 
     allocate(partit%myList_nod2D(n_owned))
-    do n = 1, n_owned; partit%myList_nod2D(n) = n; end do
+    do n = 1, n_owned
+      partit%myList_nod2D(n) = int(node_global_index(n))
+    end do
     allocate(partit%myList_elem2D(ncells))
-    do n = 1, ncells; partit%myList_elem2D(n) = n; end do
+    do n = 1, ncells
+      partit%myList_elem2D(n) = int(cell_global_index(n))
+    end do
     allocate(partit%myList_edge2D(edge2D_local))
-    do n = 1, edge2D_local; partit%myList_edge2D(n) = n; end do
+    do n = 1, edge2D_local
+      partit%myList_edge2D(n) = edge_global_ids(edge_order(n))
+    end do
+    deallocate(edge_global_ids, edge_order)
     ! CSR partition vector: size npes+1 with a balanced block distribution
     allocate(partit%part(partit%npes+1))
     partit%part(1) = 1
@@ -562,11 +660,6 @@ contains
     allocate(mesh3%ulevels_nod2D(nnodes));    mesh3%ulevels_nod2D = 1
     allocate(mesh3%nlevels_nod2D(nnodes))
     allocate(mesh3%bc_index_nod2D(nnodes));   mesh3%bc_index_nod2D = 0
-
-    node_global_index_field = atlas_nodes%global_index()
-    cell_global_index_field = atlas_cells%global_index()
-    call node_global_index_field%data(node_global_index)
-    call cell_global_index_field%data(cell_global_index)
 
     local_global_nnodes = int(maxval(node_global_index))
     local_global_ncells = int(maxval(cell_global_index))
@@ -604,8 +697,6 @@ contains
       mesh3%nlevels(e) = global_cell_levels(int(cell_global_index(e)))
     end do
     deallocate(global_node_levels, global_cell_levels)
-    call node_global_index_field%final()
-    call cell_global_index_field%final()
 
     ! ------------------------------------------------------------------
     ! 9. elem_neighbors and nod_in_elem2D
@@ -639,6 +730,22 @@ contains
         mesh3%nod_in_elem2D(mesh3%nod_in_elem2D_num(n), n) = e
       end do
     end do
+
+    do n = 1, nnodes
+      do i = 2, mesh3%nod_in_elem2D_num(n)
+        tmp_el = mesh3%nod_in_elem2D(i, n)
+        j = i - 1
+        do while (j >= 1 .and. &
+                  cell_global_index(mesh3%nod_in_elem2D(j, n)) > cell_global_index(tmp_el))
+          mesh3%nod_in_elem2D(j+1, n) = mesh3%nod_in_elem2D(j, n)
+          j = j - 1
+        end do
+        mesh3%nod_in_elem2D(j+1, n) = tmp_el
+      end do
+    end do
+
+    call node_global_index_field%final()
+    call cell_global_index_field%final()
 
     ! ------------------------------------------------------------------
     ! 10. Mesh computation routines
@@ -696,7 +803,7 @@ contains
 
     call fs%minimum(tracer_field, tmin_wp)
     call fs%maximum(tracer_field, tmax_wp)
-    call fs%sum(tracer_field, tsum_wp)
+    call fs%order_independent_sum(tracer_field, tsum_wp)
     tmin = dble(tmin_wp)
     tmax = dble(tmax_wp)
     tsum = dble(tsum_wp)
@@ -724,7 +831,7 @@ contains
 
 #ifdef ENABLE_ATLAS
   !> @brief Compute statistics directly on an Atlas field using NodeColumns
-  !! @details Calls fs%minimum, fs%maximum, fs%sum on the given field.
+  !! @details Calls fs%minimum, fs%maximum, and an order-independent sum.
   !!          The field must be real(8) precision. Results are globally reduced
   !!          across all MPI ranks by Atlas internally.
   !! @param[inout] field  Atlas field to compute statistics on
@@ -738,7 +845,7 @@ contains
     real(8), intent(out) :: tmin, tmax, tsum
     call fs%minimum(field, tmin)
     call fs%maximum(field, tmax)
-    call fs%sum(field, tsum)
+    call fs%order_independent_sum(field, tsum)
   end subroutine compute_field_stats_atlas
 #endif
 
