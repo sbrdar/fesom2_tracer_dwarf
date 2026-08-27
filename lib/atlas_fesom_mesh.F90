@@ -34,6 +34,7 @@ module atlas_fesom_mesh_module
 #endif
 
   public :: mesh_setup_with_atlas, compute_tracer_stats_atlas
+  public :: atlas_halo_exchange_nodal
 #ifdef ENABLE_ATLAS
   public :: atlas_mesh_to_fesom_mesh, compute_field_stats_atlas
   ! Module-level Atlas mesh (persists for stats computation)
@@ -41,6 +42,43 @@ module atlas_fesom_mesh_module
 #endif
 
 contains
+
+  subroutine atlas_halo_exchange_nodal(nodal_data)
+    real(kind=WP), intent(inout) :: nodal_data(:,:)
+#ifdef ENABLE_ATLAS
+    type(atlas_functionspace_NodeColumns) :: fs
+    type(atlas_Field) :: field
+    real(WP), pointer :: field_data(:,:)
+
+    ! todo: centralise fs
+    fs = atlas_functionspace_NodeColumns(atlas_mesh_global, halo=2)
+
+    field = atlas_Field('tmp',nodal_data)
+    call fs%halo_exchange(field)
+
+    call field%final()
+    call fs%final()
+
+#if 0
+    fs%create_field(name='fesom_nodal_exchange', kind=atlas_real(WP), &
+                            levels=size(nodal_data, 1))
+
+
+
+    field = fs%create_field(name='fesom_nodal_exchange', kind=atlas_real(WP), &
+                            levels=size(nodal_data, 1))
+    call field%data(field_data)
+    if (size(field_data, 2) /= size(nodal_data, 2)) then
+      error stop 'atlas_halo_exchange_nodal: incompatible node count'
+    end if
+    field_data = nodal_data
+    call fs%halo_exchange(field)
+    nodal_data = field_data
+    call field%final()
+    call fs%final()
+#endif
+#endif
+  end subroutine atlas_halo_exchange_nodal
 
   !> @brief Mesh setup entry point with optional Atlas path
   !! @param[inout] partit Partition structure

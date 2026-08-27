@@ -8,6 +8,7 @@ module oce_adv_tra_driver_module
     use oce_adv_tra_hor_interfaces
     use oce_adv_tra_ver_interfaces
     use oce_adv_tra_fct_module, only: oce_tra_adv_fct
+    use atlas_fesom_mesh_module, only: atlas_halo_exchange_nodal
     use fesom_profiler
 
     implicit none
@@ -84,6 +85,11 @@ subroutine do_oce_adv_tra(dt, vel, w, wi, we, tr_num, dynamics, tracers, partit,
     fct_minus       => tracers%work%fct_minus
     dttf_h          => tracers%work%del_ttf_advhoriz
     dttf_v          => tracers%work%del_ttf_advvert
+
+#ifdef ENABLE_ATLAS
+    call atlas_halo_exchange_nodal(ttf)
+    call atlas_halo_exchange_nodal(ttfAB)
+#endif
     
     !___________________________________________________________________________
     ! compute FCT horzontal and vertical low order solution as well as lw order
@@ -233,7 +239,11 @@ subroutine do_oce_adv_tra(dt, vel, w, wi, we, tr_num, dynamics, tracers, partit,
             call adv_tra_ver_upw1(w, ttf, partit, mesh, adv_flux_ver, o_init_zero=.true.)
         end if
 #if !defined(USE_HALF_PRECISION)
+#ifdef ENABLE_ATLAS
+        call atlas_halo_exchange_nodal(fct_LO)
+#else
         call exchange_nod(fct_LO, partit, luse_g2g = .true.)
+#endif
 #endif
 !$OMP BARRIER
     end if !--> if (trim(tracers%data(tr_num)%tra_adv_lim)=='FCT') then
