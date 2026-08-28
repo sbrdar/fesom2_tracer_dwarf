@@ -356,7 +356,7 @@ echo ""
 echo "Run the analytic dwarf:"
 echo "  cd $BUILD_DIR && ./run.sh 1 20 20 10 --periodic"
 if [ "$ENABLE_ATLAS" = "ON" ]; then
-    echo "  Atlas opt-in: ATLAS_FESOM=1 ./run.sh 1 20 20 10 --periodic"
+    echo "  Atlas opt-in: ATLAS_FESOM=1 ATLAS_GRID=fesom-pi ./run.sh 1 20 20 10 --periodic"
 fi
 echo ""
 echo "Or directly:"

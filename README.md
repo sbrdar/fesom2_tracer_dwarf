@@ -31,8 +31,11 @@ Set `ATLAS_FESOM=1` at runtime to use Atlas:
 
 ```bash
 cd build_gnu_dp_atlas
-ATLAS_FESOM=1 ./run.sh 1 20 20 10 --periodic
+ATLAS_FESOM=1 ATLAS_GRID=fesom-pi ./run.sh 1 20 20 10 --periodic
 ```
+
+`ATLAS_GRID` selects the Atlas grid and defaults to `fesom-pi` when unset or
+empty.
 
 ## Running
 

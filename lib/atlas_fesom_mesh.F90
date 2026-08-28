@@ -104,6 +104,7 @@ contains
 
     integer :: io_stat
     character(len=32)  :: use_fesom_dist_str
+    character(len=256) :: atlas_grid_name
     character(len=10)  :: npes_string
     character(len=256) :: dist_mesh_dir, rpart_file, owner_file
     character(len=5) :: rank_string
@@ -162,13 +163,20 @@ contains
     ! Initialize Atlas (loads plugins including atlas-fesom, registers grids)
     call atlas_initialize()
 
-    ! Attempt to create fesom-pi grid; fall back to mesh_setup if unavailable
-    if (partit%mype == 0) then
-      write(output_unit, '(A)') '  --> Attempting to use Atlas fesom-pi grid...'
+    atlas_grid_name = 'fesom-pi'
+    call get_environment_variable('ATLAS_GRID', atlas_grid_name, status=io_stat)
+    if (io_stat /= 0 .or. len_trim(atlas_grid_name) == 0) then
+      atlas_grid_name = 'fesom-pi'
     end if
 
-    grid_obj = atlas_Grid("fesom-pi")
-    write(output_unit, *) '  --> Atlas fesom-pi grid found: ', grid_obj%name()
+    ! Create the configured Atlas grid.
+    if (partit%mype == 0) then
+      write(output_unit, '(3A)') '  --> Attempting to use Atlas grid "', &
+        trim(atlas_grid_name), '"...'
+    end if
+
+    grid_obj = atlas_Grid(trim(atlas_grid_name))
+    write(output_unit, *) '  --> Atlas grid found: ', grid_obj%name()
 
     ! Optionally drive Atlas mesh distribution from the standard FESOM owner lists.
     ! Set ATLAS_USE_FESOM_DIST=1 to enable; rpart.out and my_list*.out are read
@@ -269,7 +277,8 @@ contains
     ncells_shrinked = int(mesh_cells_obj%size())
 
     if (partit%mype == 0) then
-      write(output_unit, '(A)') '  --> Setting up mesh from Atlas fesom-pi grid'
+      write(output_unit, '(3A)') '  --> Setting up mesh from Atlas grid "', &
+        trim(atlas_grid_name), '"'
       write(output_unit, '(A,I0,A,I0)') '      Atlas mesh: ', ncells, ' cells, ', nnodes, ' nodes'
       write(output_unit, '(A)') '      Converting to FESOM format...'
     end if
