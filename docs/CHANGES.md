@@ -2,6 +2,8 @@
 
 ## Added
 
+- Atlas-enabled builds now use the Atlas runtime path only when
+	`ATLAS_FESOM=1`; an unset or zero value uses the standard FESOM path.
 - Optional Atlas-backed mesh setup path controlled by `ENABLE_ATLAS_MESH`.
 - New mesh wrapper module `lib/atlas_fesom_mesh.F90` and integration into:
 	- `lib/tracer_init_from_mesh.F90`

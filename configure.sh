@@ -9,6 +9,7 @@
 #   --compiler COMPILER   gnu (default), intel, nvidia
 #   --precision PREC      dp (default), sp, hp
 #   --openacc             Enable OpenACC (default: off)
+#   --atlas               Build Atlas support (runtime opt-in: ATLAS_FESOM=1)
 #   --build-type TYPE     Release (default) or Debug
 #   --clean               Remove build directory before configuring
 #   --build               Also run make after configuring
@@ -354,6 +355,9 @@ chmod +x run.sh
 echo ""
 echo "Run the analytic dwarf:"
 echo "  cd $BUILD_DIR && ./run.sh 1 20 20 10 --periodic"
+if [ "$ENABLE_ATLAS" = "ON" ]; then
+    echo "  Atlas opt-in: ATLAS_FESOM=1 ./run.sh 1 20 20 10 --periodic"
+fi
 echo ""
 echo "Or directly:"
 echo "  cd $BUILD_DIR && $MPIRUN -np 1 ./bin/fesom_tracer_analytic 20 20 10 --periodic"

@@ -34,6 +34,7 @@ module atlas_fesom_mesh_module
 #endif
 
   public :: mesh_setup_with_atlas, compute_tracer_stats_atlas
+  public :: atlas_fesom_enabled
   public :: atlas_halo_exchange_nodal
 #ifdef ENABLE_ATLAS
   public :: atlas_mesh_to_fesom_mesh, compute_field_stats_atlas
@@ -42,6 +43,24 @@ module atlas_fesom_mesh_module
 #endif
 
 contains
+
+  logical function atlas_fesom_enabled()
+    character(len=32) :: value
+    integer :: status
+    logical, save :: checked = .false.
+    logical, save :: enabled = .false.
+
+#ifdef ENABLE_ATLAS
+    if (.not. checked) then
+      call get_environment_variable('ATLAS_FESOM', value, status=status)
+      enabled = status == 0 .and. trim(value) == '1'
+      checked = .true.
+    end if
+    atlas_fesom_enabled = enabled
+#else
+    atlas_fesom_enabled = .false.
+#endif
+  end function atlas_fesom_enabled
 
   subroutine atlas_halo_exchange_nodal(nodal_data)
     real(kind=WP), intent(inout) :: nodal_data(:,:)
@@ -90,6 +109,15 @@ contains
     integer :: file_rank, owned_count, ghost_count
     integer, allocatable :: part_csr(:), part_per_node(:), local_node_list(:)
     logical :: have_dist
+
+    if (.not. atlas_fesom_enabled()) then
+      if (partit%mype == 0) then
+        write(output_unit, '(A)') &
+          '  --> ATLAS_FESOM is not 1; using standard FESOM mesh setup'
+      end if
+      call mesh_setup(partit, mesh)
+      return
+    end if
 
     ! Use sensible defaults for fesom-pi grid
     nl_default = 10
@@ -665,7 +693,21 @@ contains
     real(WP), pointer :: atlas_tracer(:,:)
     real(WP) :: tmin_wp, tmax_wp, tsum_wp
     integer :: node_count
+    integer :: ierr
+    real(8) :: tmin_loc, tmax_loc, tsum_loc
 
+    if (.not. atlas_fesom_enabled()) then
+      tmin_loc = dble(minval(tracer_data(:, 1:n_owned)))
+      tmax_loc = dble(maxval(tracer_data(:, 1:n_owned)))
+      tsum_loc = sum(dble(tracer_data(:, 1:n_owned)))
+      call MPI_Allreduce(tmin_loc, tmin, 1, MPI_DOUBLE_PRECISION, MPI_MIN, &
+                         partit%MPI_COMM_FESOM, ierr)
+      call MPI_Allreduce(tmax_loc, tmax, 1, MPI_DOUBLE_PRECISION, MPI_MAX, &
+                         partit%MPI_COMM_FESOM, ierr)
+      call MPI_Allreduce(tsum_loc, tsum, 1, MPI_DOUBLE_PRECISION, MPI_SUM, &
+                         partit%MPI_COMM_FESOM, ierr)
+      return
+    end if
 
     fs = atlas_functionspace_NodeColumns(atlas_mesh_global,halo=2)
     tracer_field = fs%create_field(name='tracer', kind=atlas_real(WP), &

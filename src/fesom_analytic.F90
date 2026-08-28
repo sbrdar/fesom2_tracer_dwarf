@@ -50,7 +50,7 @@ program tracer_dwarf_analytic
 #endif
 #ifdef ENABLE_ATLAS
   use atlas_module
-  use atlas_fesom_mesh_module
+  use atlas_fesom_mesh_module, only: atlas_fesom_enabled
 #endif
 
   implicit none
@@ -199,7 +199,8 @@ program tracer_dwarf_analytic
   ! ========================================
   call fesom_profiler_start("mesh_init")
 #ifdef ENABLE_ATLAS
-  call atlas_initialize()
+  if (atlas_fesom_enabled()) then
+    call atlas_initialize()
 
   ! Exercise the atlas API: build a RegularLonLat grid, distribute it across
   ! ranks, and generate the structured atlas mesh.  The atlas mesh uses
@@ -233,9 +234,12 @@ program tracer_dwarf_analytic
   call atlas_mesh2%final()
   call atlas_distribution2%final()
   call atlas_meshgen2%final()
-  call atlas_grid2%final()
-  ! PROBLEMATIC Use mesh3 for all downstream advection code
-  mesh = mesh3
+    call atlas_grid2%final()
+    ! PROBLEMATIC Use mesh3 for all downstream advection code
+    mesh = mesh3
+  else
+    call generate_analytic_mesh(nx, ny, nl, Lx, Ly, max_depth, partit, mesh, periodic)
+  end if
 #else
   call generate_analytic_mesh(nx, ny, nl, Lx, Ly, max_depth, partit, mesh, periodic)
 #endif

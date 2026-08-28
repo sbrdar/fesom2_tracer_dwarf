@@ -7,9 +7,6 @@ module oce_mesh_module
     use par_support_interfaces
     use o_PARAM, only: WP, MP
     use mpi
-#ifdef ENABLE_ATLAS
-    use atlas_module
-#endif
 #ifdef USE_HALF_PRECISION
     use hp_math_intrinsics
 #endif
@@ -53,36 +50,6 @@ SUBROUTINE mesh_setup(partit, mesh)
       type(t_mesh),   intent(inout)         :: mesh
       type(t_partit), intent(inout), target :: partit
 
-#ifdef ENABLE_ATLAS
-      type(atlas_Grid)             :: atlas_grid_pi
-      type(atlas_MeshGenerator)    :: atlas_meshgen_pi
-      type(atlas_Mesh)             :: fesom_pi
-      type(atlas_GridDistribution) :: distribution
-    integer, allocatable         :: partition_array(:)
-      ! Generate atlas mesh from fesom-pi grid
-      call atlas_initialize()
-
-      ! Use fesom_pi grid from atlas-fesom plugin (no partitioning needed for fesom generator)
-      atlas_grid_pi = atlas_Grid("fesom-pi")
-      if (partit%mype == 0) then
-        write(*, '(A)') &
-          '  --> Atlas mesh generated from fesom-pi grid (atlas-fesom plugin)'
-      end if
-
-      call uncompress_partit(partit%part, partition_array)
-      distribution = atlas_GridDistribution(partition_array, part0=1)
-
-      atlas_meshgen_pi      = atlas_MeshGenerator("fesom")
-      fesom_pi              = atlas_meshgen_pi%generate(atlas_grid_pi,distribution)
-
-      ! Clean up atlas objects
-      call fesom_pi%final()
-      call atlas_meshgen_pi%final()
-      call atlas_grid_pi%final()
-      call atlas_finalize()
-
-#else
-
       if (flag_debug .and. partit%mype==0)  print *, achar(27)//'[36m'//'     --> call set_mesh_transform_matrix'//achar(27)//'[0m'
       call set_mesh_transform_matrix  !(rotated grid)
 
@@ -123,7 +90,6 @@ SUBROUTINE mesh_setup(partit, mesh)
 
       if (flag_debug .and. partit%mype==0)  print *, achar(27)//'[36m'//'     --> call mesh_auxiliary_arrays'//achar(27)//'[0m'
       call mesh_auxiliary_arrays(partit, mesh)
-#endif
 
 END SUBROUTINE mesh_setup
 !======================================================================

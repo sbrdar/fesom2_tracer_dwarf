@@ -26,7 +26,13 @@ Build the Atlas dependencies, then configure the dwarf with Atlas enabled:
 clean so the script can switch branches and fast-forward without overwriting
 local work. With `--atlas`, `configure.sh` also downloads `fesom-pi.atlas` into
 the local Atlas installation and enables atlas-fesom caching in the generated
-run wrapper.
+run wrapper. The resulting binaries use the standard non-Atlas path by default.
+Set `ATLAS_FESOM=1` at runtime to use Atlas:
+
+```bash
+cd build_gnu_dp_atlas
+ATLAS_FESOM=1 ./run.sh 1 20 20 10 --periodic
+```
 
 ## Running
 
