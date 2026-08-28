@@ -15,6 +15,8 @@
 
 ## Fixed
 
+- `ATLAS_FESOM=1 ./run.sh ...` no longer replaces the analytic mesh with an
+	uninitialized mesh or invokes Atlas halo operations without an active mesh.
 - Atlas mesh conversion now uses `atlas_build_edges` and copies Atlas
 	edge-to-node and edge-to-cell connectivity directly into the FESOM mesh.
 	Atlas-local edge ordering and orientation are preserved.

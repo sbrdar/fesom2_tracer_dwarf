@@ -8,7 +8,7 @@ module oce_adv_tra_driver_module
     use oce_adv_tra_hor_interfaces
     use oce_adv_tra_ver_interfaces
     use oce_adv_tra_fct_module, only: oce_tra_adv_fct
-    use atlas_fesom_mesh_module, only: atlas_fesom_enabled, atlas_halo_exchange_nodal
+    use atlas_fesom_mesh_module, only: atlas_fesom_active, atlas_halo_exchange_nodal
     use fesom_profiler
 
     implicit none
@@ -87,7 +87,7 @@ subroutine do_oce_adv_tra(dt, vel, w, wi, we, tr_num, dynamics, tracers, partit,
     dttf_v          => tracers%work%del_ttf_advvert
 
 #ifdef ENABLE_ATLAS
-    if (atlas_fesom_enabled()) then
+    if (atlas_fesom_active()) then
         call atlas_halo_exchange_nodal(ttf)
         call atlas_halo_exchange_nodal(ttfAB)
     end if
@@ -242,7 +242,7 @@ subroutine do_oce_adv_tra(dt, vel, w, wi, we, tr_num, dynamics, tracers, partit,
         end if
 #if !defined(USE_HALF_PRECISION)
 #ifdef ENABLE_ATLAS
-    if (atlas_fesom_enabled()) then
+    if (atlas_fesom_active()) then
         call atlas_halo_exchange_nodal(fct_LO)
     else
         call exchange_nod(fct_LO, partit, luse_g2g = .true.)

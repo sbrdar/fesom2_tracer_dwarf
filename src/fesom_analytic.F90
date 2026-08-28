@@ -62,7 +62,6 @@ program tracer_dwarf_analytic
   type(atlas_GridDistribution) :: atlas_distribution2
   type(atlas_MeshGenerator)    :: atlas_meshgen2
   type(atlas_Mesh)             :: atlas_mesh2
-  type(t_mesh)                 :: mesh3
   integer, allocatable         :: atlas_part_array(:)
   integer                      :: atlas_pe
 #endif
@@ -234,15 +233,11 @@ program tracer_dwarf_analytic
   call atlas_mesh2%final()
   call atlas_distribution2%final()
   call atlas_meshgen2%final()
-    call atlas_grid2%final()
-    ! PROBLEMATIC Use mesh3 for all downstream advection code
-    mesh = mesh3
-  else
-    call generate_analytic_mesh(nx, ny, nl, Lx, Ly, max_depth, partit, mesh, periodic)
+  call atlas_grid2%final()
+  call atlas_finalize()
   end if
-#else
-  call generate_analytic_mesh(nx, ny, nl, Lx, Ly, max_depth, partit, mesh, periodic)
 #endif
+  call generate_analytic_mesh(nx, ny, nl, Lx, Ly, max_depth, partit, mesh, periodic)
 
   ! ========================================
   ! Optional: save mesh for Python visualization

@@ -34,12 +34,13 @@ module atlas_fesom_mesh_module
 #endif
 
   public :: mesh_setup_with_atlas, compute_tracer_stats_atlas
-  public :: atlas_fesom_enabled
+  public :: atlas_fesom_enabled, atlas_fesom_active
   public :: atlas_halo_exchange_nodal
 #ifdef ENABLE_ATLAS
   public :: atlas_mesh_to_fesom_mesh, compute_field_stats_atlas
   ! Module-level Atlas mesh (persists for stats computation)
   type(atlas_Mesh), save :: atlas_mesh_global
+  logical, save :: atlas_mesh_active = .false.
 #endif
 
 contains
@@ -61,6 +62,14 @@ contains
     atlas_fesom_enabled = .false.
 #endif
   end function atlas_fesom_enabled
+
+  logical function atlas_fesom_active()
+#ifdef ENABLE_ATLAS
+    atlas_fesom_active = atlas_mesh_active
+#else
+    atlas_fesom_active = .false.
+#endif
+  end function atlas_fesom_active
 
   subroutine atlas_halo_exchange_nodal(nodal_data)
     real(kind=WP), intent(inout) :: nodal_data(:,:)
@@ -272,6 +281,7 @@ contains
 
     ! Store mesh for later use by compute_tracer_stats_atlas
     atlas_mesh_global = mesh_obj
+    atlas_mesh_active = .true.
     call meshgen_obj%FINAL()
     call grid_obj%FINAL()
     ! Do NOT finalize mesh_obj - it's stored in atlas_mesh_global
@@ -696,7 +706,7 @@ contains
     integer :: ierr
     real(8) :: tmin_loc, tmax_loc, tsum_loc
 
-    if (.not. atlas_fesom_enabled()) then
+    if (.not. atlas_fesom_active()) then
       tmin_loc = dble(minval(tracer_data(:, 1:n_owned)))
       tmax_loc = dble(maxval(tracer_data(:, 1:n_owned)))
       tsum_loc = sum(dble(tracer_data(:, 1:n_owned)))

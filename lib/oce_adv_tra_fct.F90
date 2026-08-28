@@ -4,7 +4,7 @@ module oce_adv_tra_fct_module
   USE MOD_PARTIT
   USE MOD_PARSUP
   USE g_comm_auto
-    use atlas_fesom_mesh_module, only: atlas_fesom_enabled, atlas_halo_exchange_nodal
+    use atlas_fesom_mesh_module, only: atlas_fesom_active, atlas_halo_exchange_nodal
   
   implicit none
   
@@ -382,7 +382,7 @@ subroutine oce_tra_adv_fct(dt, ttf, lo, adf_h, adf_v, fct_ttf_min, fct_ttf_max, 
 !$OMP MASTER
 #if !defined(USE_HALF_PRECISION)
 #ifdef ENABLE_ATLAS
-    if (atlas_fesom_enabled()) then
+    if (atlas_fesom_active()) then
         call atlas_halo_exchange_nodal(fct_plus)
         call atlas_halo_exchange_nodal(fct_minus)
     else
