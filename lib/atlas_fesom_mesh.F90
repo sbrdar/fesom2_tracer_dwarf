@@ -288,18 +288,18 @@ contains
     ! Mesh dimensions
     integer :: nnodes, ncells, nl, edge2D_local, edge2D_in_local
     integer :: global_nnodes, global_ncells, local_global_nnodes
-    integer :: local_global_ncells, file_unit, edge_file_unit, edge_tri_file_unit, io_stat
-    integer :: global_edge_count, global_internal_edge_count, global_edge_id, canonical_node_count
+    integer :: local_global_ncells, file_unit, io_stat
+    integer :: canonical_node_count
     integer, allocatable :: global_node_levels(:), global_cell_levels(:)
-    integer, allocatable :: canonical_elements(:,:), canonical_edges(:,:), canonical_edge_tri(:,:)
+    integer, allocatable :: canonical_elements(:,:)
     real(kind=MP), allocatable :: canonical_lonlat(:,:)
 
     integer :: i, j, canonical_cell_count, global_node_id, canonical_node_flag
     integer :: tmp_el
 
     ! Edge classification
-    integer :: n_internal, eidx
-    integer, allocatable :: edge_perm(:), edge_order(:), edge_global_ids(:), aux(:)
+    integer :: n_internal
+    integer, allocatable :: aux(:)
     integer :: e, n, k, q, e1
     integer :: elnodes(3), eledges(3)
     real(kind=WP) :: geographic_lon, geographic_lat, rotated_lon, rotated_lat
@@ -441,98 +441,21 @@ contains
     end do
     edge2D_in_local = n_internal
 
-    ! Match Atlas-local edges to the canonical FESOM edge sequence.
-    open(newunit=edge_file_unit, file=trim(MeshPath)//'edgenum.out', &
-         status='old', action='read', iostat=io_stat)
-    if (io_stat /= 0) error stop 'Cannot open edgenum.out for Atlas mesh'
-    read(edge_file_unit, *, iostat=io_stat) global_edge_count
-    read(edge_file_unit, *, iostat=io_stat) global_internal_edge_count
-    close(edge_file_unit)
-    if (io_stat /= 0) error stop 'Cannot read edgenum.out for Atlas mesh'
-
-    allocate(canonical_edges(2, global_edge_count))
-    allocate(canonical_edge_tri(2, global_edge_count))
-    open(newunit=edge_file_unit, file=trim(MeshPath)//'edges.out', &
-         status='old', action='read', iostat=io_stat)
-    if (io_stat /= 0) error stop 'Cannot open edges.out for Atlas mesh'
-    open(newunit=edge_tri_file_unit, file=trim(MeshPath)//'edge_tri.out', &
-         status='old', action='read', iostat=io_stat)
-    if (io_stat /= 0) error stop 'Cannot open edge_tri.out for Atlas mesh'
-    do n = 1, global_edge_count
-      read(edge_file_unit, *, iostat=io_stat) canonical_edges(:, n)
-      if (io_stat /= 0) error stop 'Cannot read edges.out for Atlas mesh'
-      read(edge_tri_file_unit, *, iostat=io_stat) canonical_edge_tri(:, n)
-      if (io_stat /= 0) error stop 'Cannot read edge_tri.out for Atlas mesh'
-    end do
-    close(edge_file_unit)
-    close(edge_tri_file_unit)
-
-    ! Build permutation in canonical global edge order.
-    allocate(edge_global_ids(edge2D_local))
-    do e = 1, edge2D_local
-      edge_global_ids(e) = 0
-      do global_edge_id = 1, global_edge_count
-        if ((int(node_global_index(edge_nodes(1, e))) == canonical_edges(1, global_edge_id) .and. &
-             int(node_global_index(edge_nodes(2, e))) == canonical_edges(2, global_edge_id)) .or. &
-            (int(node_global_index(edge_nodes(1, e))) == canonical_edges(2, global_edge_id) .and. &
-             int(node_global_index(edge_nodes(2, e))) == canonical_edges(1, global_edge_id))) then
-          edge_global_ids(e) = global_edge_id
-          exit
-        end if
-      end do
-      if (edge_global_ids(e) == 0) then
-        error stop 'Atlas edge is absent from canonical FESOM edge list'
-      end if
-    end do
-
-    allocate(edge_order(edge2D_local))
-    edge_order = [(n, n=1, edge2D_local)]
-    do i = 2, edge2D_local
-      eidx = edge_order(i)
-      j = i - 1
-      do while (j >= 1 .and. edge_global_ids(edge_order(j)) > edge_global_ids(eidx))
-        edge_order(j+1) = edge_order(j)
-        j = j - 1
-      end do
-      edge_order(j+1) = eidx
-    end do
-    allocate(edge_perm(edge2D_local))
-    do n = 1, edge2D_local
-      edge_perm(edge_order(n)) = n
-    end do
-
-    ! Fill mesh3%edges and mesh3%edge_tri using permuted indices
+    ! Preserve Atlas-local edge ordering and orientation.
     allocate(mesh3%edges(2, edge2D_local))
     allocate(mesh3%edge_tri(2, edge2D_local))
     allocate(mesh3%elem_edges(3, ncells))
     mesh3%elem_edges = 0
 
     do e = 1, edge2D_local
-      n = edge_perm(e)
-      global_edge_id = edge_global_ids(e)
-      if (int(node_global_index(edge_nodes(1, e))) == canonical_edges(1, global_edge_id)) then
-        mesh3%edges(:, n) = int(edge_nodes(:, e))
+      mesh3%edges(:, e) = int(edge_nodes(:, e))
+      mesh3%edge_tri(1, e) = int(edge_cells(1, e))
+      if (edge_cell_cols(e) == 2) then
+        mesh3%edge_tri(2, e) = int(edge_cells(2, e))
       else
-        mesh3%edges(1, n) = int(edge_nodes(2, e))
-        mesh3%edges(2, n) = int(edge_nodes(1, e))
-      end if
-
-      if (edge_cell_cols(e) == 2 .and. edge_cells(2, e) > 0) then
-        if (int(cell_global_index(edge_cells(1, e))) == canonical_edge_tri(1, global_edge_id)) then
-          mesh3%edge_tri(:, n) = int(edge_cells(:, e))
-        else if (int(cell_global_index(edge_cells(2, e))) == canonical_edge_tri(1, global_edge_id)) then
-          mesh3%edge_tri(1, n) = int(edge_cells(2, e))
-          mesh3%edge_tri(2, n) = int(edge_cells(1, e))
-        else
-          error stop 'Atlas edge cells disagree with canonical FESOM edge list'
-        end if
-      else
-        mesh3%edge_tri(1, n) = int(edge_cells(1, e))
-        mesh3%edge_tri(2, n) = 0
+        mesh3%edge_tri(2, e) = 0
       end if
     end do
-    deallocate(edge_perm)
-    deallocate(canonical_edges, canonical_edge_tri)
 
     mesh3%edge2D    = edge2D_local
     mesh3%edge2D_in = edge2D_in_local
@@ -583,9 +506,8 @@ contains
     end do
     allocate(partit%myList_edge2D(edge2D_local))
     do n = 1, edge2D_local
-      partit%myList_edge2D(n) = edge_global_ids(edge_order(n))
+      partit%myList_edge2D(n) = n
     end do
-    deallocate(edge_global_ids, edge_order)
     ! CSR partition vector: size npes+1 with a balanced block distribution
     allocate(partit%part(partit%npes+1))
     partit%part(1) = 1

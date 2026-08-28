@@ -13,18 +13,17 @@
 
 ## Fixed
 
-- Atlas mesh conversion now uses `atlas_build_edges` and Atlas edge-to-node and
-	edge-to-cell connectivity instead of constructing topology with a custom
-	half-edge sort. Canonical FESOM edge ordering is retained for reproducibility.
+- Atlas mesh conversion now uses `atlas_build_edges` and copies Atlas
+	edge-to-node and edge-to-cell connectivity directly into the FESOM mesh.
+	Atlas-local edge ordering and orientation are preserved.
 - `ATLAS_USE_FESOM_DIST=1` now constructs the Atlas distribution from owned
 	nodes in `my_list*.out` instead of incorrectly treating `rpart.out` counts as
-	contiguous global-node ranges. Both Atlas distribution modes and standard
-	FESOM now produce identical statistics at every tracer step.
+	contiguous global-node ranges. Both Atlas distribution modes produce stable
+	statistics across MPI rank counts.
 - Atlas tracer sums now use `order_independent_sum`, removing partition-order
 	differences from diagnostic reductions.
-- Atlas mesh conversion now orders and orients local edges using the canonical
-	`edges.out` and `edge_tri.out` global sequence. Eight-rank Atlas and
-	file-based runs now print identical min/max/sum values at every tracer step.
+- Atlas and file-based runs may differ at the last printed digits because their
+	edge traversal orders differ, while remaining numerically equivalent.
 - Atlas tracer statistics now halo-fill temporary fields before reductions, so
 	zero-initialized ghost slots cannot produce a false minimum for positive fields.
 - Atlas mesh conversion now maps `nlvls.out` and `elvls.out` onto local nodes
