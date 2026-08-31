@@ -135,8 +135,8 @@ contains
     allocate(dynamics%w(mesh%nl, partit%myDim_nod2D+partit%eDim_nod2D))
     
     ! Initialize to zero
-    dynamics%uv = 1.1_WP
-    dynamics%w  = 0.3_WP
+    dynamics%uv = 0.0_WP
+    dynamics%w  = 0.0_WP
     
     if (partit%mype == 0) then
       write(output_unit, '(A)') '      Velocity arrays allocated and zeroed'

@@ -78,6 +78,7 @@ program tracer_dwarf_mesh_init
   call tracer_init_mesh_and_arrays(partit, mesh, dynamics, tracers)
 
   ! Use a smooth, spatially varying horizontal velocity field.
+  ! Need to change zero-velocity field to a spatially varying field as advection would not be properly tested in using the halo exchange
   nz = mesh%nl - 1
   do elem = 1, partit%myDim_elem2D
     elem_nodes = mesh%elem2D_nodes(:, elem)
