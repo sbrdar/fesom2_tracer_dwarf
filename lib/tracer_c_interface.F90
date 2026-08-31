@@ -851,7 +851,11 @@ contains
     end if
     
     ! Load mesh using Atlas-backed setup when enabled, otherwise fallback to mesh_setup
-    call mesh_setup_with_atlas(global_partit, global_mesh)
+    if (atlas_fesom_enabled()) then
+        call mesh_setup_with_atlas(global_partit, global_mesh)
+    else
+        call mesh_setup(global_partit, global_mesh)
+    end if
     
     ! Mark as initialized
     tracer_initialized = .true.
