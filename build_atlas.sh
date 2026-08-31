@@ -52,7 +52,7 @@ ECKIT_SOURCE="${DEPS_DIR}/eckit"
 FCKIT_SOURCE="${DEPS_DIR}/fckit"
 ATLAS_SOURCE="${DEPS_DIR}/atlas"
 ATLAS_GIT_REPOSITORY="https://github.com/ecmwf/atlas.git"
-ATLAS_GIT_VERSION="fix/nodecolumns_statistics"
+ATLAS_GIT_VERSION="develop"
 
 # Build directories
 BUILD_BASE="${SCRIPT_DIR}/atlas_builds_${COMPILER}"

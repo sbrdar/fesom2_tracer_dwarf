@@ -314,17 +314,6 @@ if(ENABLE_ATLAS)
         target_compile_definitions(${PROJECT_NAME}_Fortran PRIVATE ENABLE_ATLAS_FESOM)
     endif()
 
-    # On macOS, when using pre-built Atlas+eckit, the old MPICH 4.3.0 may appear
-    # in transitive dependencies. Force the system MPI to take precedence by:
-    # 1. Appending it to the link line (linked last wins)
-    # 2. Using explicit linker flags to prefer our MPI over the old version
-    if(APPLE)
-        get_target_property(MPI_LIBS MPI::MPI_Fortran INTERFACE_LINK_LIBRARIES)
-        target_link_libraries(${PROJECT_NAME}_Fortran PUBLIC "${MPI_LIBS}")
-        # Add explicit linker flag to use the system MPICH
-        target_link_options(${PROJECT_NAME}_Fortran BEFORE PRIVATE
-            "LINKER:-L/opt/homebrew/Cellar/mpich/5.0.1/lib")
-    endif()
 
     if(ATLAS_RUNTIME_LIBDIR)
         set_property(TARGET ${PROJECT_NAME}_Fortran APPEND PROPERTY BUILD_RPATH "${ATLAS_RUNTIME_LIBDIR}")
