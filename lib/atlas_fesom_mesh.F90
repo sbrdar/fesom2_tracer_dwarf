@@ -864,22 +864,6 @@ contains
 
     call tracer_field%final()
     call fs%final()
-#else
-    integer :: ierr
-    real(8) :: tmin_loc, tmax_loc, tsum_loc
-    
-    ! Compute local min/max/sum on this rank
-    tmin_loc = dble(minval(tracer_data(:, 1:n_owned)))
-    tmax_loc = dble(maxval(tracer_data(:, 1:n_owned)))
-    tsum_loc = sum(dble(tracer_data(:, 1:n_owned)))
-    
-    ! Reduce across all ranks
-    call MPI_Allreduce(tmin_loc, tmin, 1, MPI_DOUBLE_PRECISION, MPI_MIN, &
-                       partit%MPI_COMM_FESOM, ierr)
-    call MPI_Allreduce(tmax_loc, tmax, 1, MPI_DOUBLE_PRECISION, MPI_MAX, &
-                       partit%MPI_COMM_FESOM, ierr)
-    call MPI_Allreduce(tsum_loc, tsum, 1, MPI_DOUBLE_PRECISION, MPI_SUM, &
-                       partit%MPI_COMM_FESOM, ierr)
 #endif
   end subroutine compute_tracer_stats_atlas
 
