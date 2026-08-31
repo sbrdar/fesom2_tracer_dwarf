@@ -16,6 +16,9 @@
 
 ## Fixed
 
+- Structured Atlas grids such as `O64` now use Atlas-native coordinates and
+	triangulated connectivity. Ghost/PATCH cells and their edges are excluded,
+	and the retained edges follow FESOM's internal/boundary ordering.
 - `ATLAS_FESOM=1 ./run.sh ...` no longer replaces the analytic mesh with an
 	uninitialized mesh or invokes Atlas halo operations without an active mesh.
 - Atlas mesh conversion now uses `atlas_build_edges` and copies Atlas

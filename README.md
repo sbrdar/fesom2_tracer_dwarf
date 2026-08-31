@@ -37,6 +37,12 @@ ATLAS_FESOM=1 ATLAS_GRID=fesom-pi ./run.sh 1 20 20 10 --periodic
 `ATLAS_GRID` selects the Atlas grid and defaults to `fesom-pi` when unset or
 empty.
 
+The mesh-file driver also accepts Atlas structured grids on one MPI rank:
+
+```bash
+ATLAS_FESOM=1 ATLAS_GRID=O64 ./bin/fesom_tracer_mesh_init
+```
+
 ## Running
 
 ### Analytic Dwarf (recommended for testing)
