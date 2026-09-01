@@ -183,52 +183,6 @@ if [ "$ENABLE_ATLAS" = "ON" ]; then
 fi
 
 # ========================================
-# Handle Atlas: download and/or build from source
-# ========================================
-if [ "$ENABLE_ATLAS" = "ON" ]; then
-    ATLAS_INSTALL_DIR="${SCRIPT_DIR}/atlas_install_${COMPILER}"
-    ATLAS_CONFIG_DIR="${ATLAS_INSTALL_DIR}/lib/cmake/atlas"
-    ATLAS_CONFIG_FILE_1="${ATLAS_CONFIG_DIR}/atlas-config.cmake"
-    ATLAS_CONFIG_FILE_2="${ATLAS_CONFIG_DIR}/atlasConfig.cmake"
-    ATLAS_FESOM_DATA_URL="https://sites.ecmwf.int/repository/atlas/grids/fesom/v0/fesom-pi.atlas"
-    ATLAS_FESOM_DATA_DIR="${ATLAS_INSTALL_DIR}/share/atlas/grids/fesom/v0"
-    ATLAS_FESOM_DATA_FILE="${ATLAS_FESOM_DATA_DIR}/fesom-pi.atlas"
-    export ATLAS_FESOM_CACHING=1
-
-    echo ""
-    echo "========================================="
-    echo "Atlas Configuration"
-    echo "========================================="
-
-    # Check if Atlas is already installed locally
-    if [ -f "${ATLAS_CONFIG_FILE_1}" ] || [ -f "${ATLAS_CONFIG_FILE_2}" ]; then
-        echo "Found locally-built Atlas at: $ATLAS_INSTALL_DIR"
-        CMAKE_EXTRA_ARGS="${CMAKE_EXTRA_ARGS} -Datlas_DIR=${ATLAS_CONFIG_DIR}"
-    else
-        if [ ! -x "${SCRIPT_DIR}/build_atlas.sh" ]; then
-            echo "Error: ${SCRIPT_DIR}/build_atlas.sh not found or not executable"
-            echo "Cannot auto-build Atlas."
-            exit 1
-        fi
-
-        echo "Building Atlas from source (this can take a while)..."
-        BUILD_ATLAS_ARGS="--compiler $COMPILER"
-        if $DO_CLEAN; then
-            BUILD_ATLAS_ARGS="$BUILD_ATLAS_ARGS --clean"
-        fi
-        "${SCRIPT_DIR}/build_atlas.sh" $BUILD_ATLAS_ARGS
-
-        if [ -f "${ATLAS_CONFIG_FILE_1}" ] || [ -f "${ATLAS_CONFIG_FILE_2}" ]; then
-            echo "Atlas build complete and detected at: $ATLAS_INSTALL_DIR"
-            CMAKE_EXTRA_ARGS="${CMAKE_EXTRA_ARGS} -Datlas_DIR=${ATLAS_CONFIG_DIR}"
-        else
-            echo "Error: Atlas build finished but config was not found in ${ATLAS_CONFIG_DIR}"
-            exit 1
-        fi
-    fi
-fi
-
-# ========================================
 # Print configuration
 # ========================================
 echo ""
