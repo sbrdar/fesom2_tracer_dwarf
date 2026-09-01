@@ -226,23 +226,6 @@ if [ "$ENABLE_ATLAS" = "ON" ]; then
             exit 1
         fi
     fi
-
-    if [ ! -s "${ATLAS_FESOM_DATA_FILE}" ]; then
-        if ! command -v curl >/dev/null 2>&1; then
-            echo "Error: curl is required to download fesom-pi.atlas"
-            exit 1
-        fi
-        echo "Downloading fesom-pi.atlas..."
-        mkdir -p "${ATLAS_FESOM_DATA_DIR}"
-        rm -f "${ATLAS_FESOM_DATA_FILE}.tmp"
-        curl --fail --location --retry 3 \
-            --output "${ATLAS_FESOM_DATA_FILE}.tmp" \
-            "${ATLAS_FESOM_DATA_URL}"
-        mv "${ATLAS_FESOM_DATA_FILE}.tmp" "${ATLAS_FESOM_DATA_FILE}"
-        echo "Installed fesom-pi.atlas at: ${ATLAS_FESOM_DATA_FILE}"
-    else
-        echo "Found fesom-pi.atlas at: ${ATLAS_FESOM_DATA_FILE}"
-    fi
 fi
 
 # ========================================

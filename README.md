@@ -21,21 +21,21 @@ Build the Atlas dependencies, then configure the dwarf with Atlas enabled:
 ./configure.sh --compiler gnu --precision dp --clean --build --atlas
 ```
 
-`build_atlas.sh` selects Atlas branch
-`fix/fortran-unstructured-grid-by-id`. Existing Atlas source checkouts must be
+`build_atlas.sh` selects Atlas. Existing Atlas source checkouts must be
 clean so the script can switch branches and fast-forward without overwriting
-local work. With `--atlas`, `configure.sh` also downloads `fesom-pi.atlas` into
-the local Atlas installation and enables atlas-fesom caching in the generated
-run wrapper. The resulting binaries use the standard non-Atlas path by default.
+local work. With `--atlas`, `configure.sh` enables atlas-fesom caching in the generated
+run wrapper which then allows automatic download of run-time requested FESOM grids.
+The resulting binaries use the standard non-Atlas path by default.
 Set `ATLAS_FESOM=1` at runtime to use Atlas:
 
 ```bash
 cd build_gnu_dp_atlas
-ATLAS_FESOM=1 ATLAS_GRID=fesom-pi ./run.sh 1 20 20 10 --periodic
+ATLAS_FESOM=1 ATLAS_GRID=fesom-pi ATLAS_USE_FESOM_DIST=0 mpirun -np 8 ./bin/fesom_tracer_mesh_init
 ```
 
 `ATLAS_GRID` selects the Atlas grid and defaults to `fesom-pi` when unset or
 empty.
+`ATLAS_USE_FESOM_DIST=1` reads in the original FESOM paritioning from a file and applies it to Atlas generated grid, if `ATLAS_FESOM=1` is used.
 
 The mesh-file driver also accepts Atlas structured grids on one MPI rank:
 
