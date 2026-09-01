@@ -21,10 +21,11 @@ Build the Atlas dependencies, then configure the dwarf with Atlas enabled:
 ./configure.sh --compiler gnu --precision dp --clean --build --atlas
 ```
 
-`build_atlas.sh` selects Atlas. Existing Atlas source checkouts must be
-clean so the script can switch branches and fast-forward without overwriting
-local work. With `--atlas`, `configure.sh` enables atlas-fesom caching in the generated
-run wrapper which then allows automatic download of run-time requested FESOM grids.
+`build_atlas.sh` delegates to Atlas's `tools/install.sh` with all dependencies,
+Fortran, LZ4, and atlas-fesom enabled. The atlas-fesom dependency path also
+installs METIS. If the Atlas source is absent, the script clones it into
+`atlas_deps/atlas`. With `--atlas`, `configure.sh` enables atlas-fesom caching in
+the generated run wrapper, allowing automatic download of requested FESOM grids.
 The resulting binaries use the standard non-Atlas path by default.
 Set `ATLAS_FESOM=1` at runtime to use Atlas:
 
