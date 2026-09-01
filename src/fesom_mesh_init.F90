@@ -23,11 +23,10 @@ program tracer_dwarf_mesh_init
   type(t_dyn)    :: dynamics
   type(t_tracer) :: tracers
   
-  integer :: n, nz, istep, nsteps, ierr, elem, kz, nzmin, nzmax
+  integer :: n, nz, istep, nsteps, ivar,ierr, elem, kz, nzmin, nzmax
   integer :: elem_nodes(3)
   real(kind=WP) :: dt_local, x_coord, y_coord, z_coord
-  real(8) :: tmin, tmax, tsum, smin, smax, ssum
-  real(8) :: tmin_loc, tmax_loc, tsum_loc, smin_loc, smax_loc, ssum_loc
+  real(8), dimension(2) :: trmin_loc, trmax_loc, trsum_loc, trmin, trmax, trsum
   
   ! ========================================
   ! Initialize MPI first
@@ -141,41 +140,26 @@ program tracer_dwarf_mesh_init
   
   ! Compute tracer statistics using Atlas (if available) or MPI_Allreduce
   if (atlas_fesom_enabled()) then
-    call compute_tracer_stats_atlas(tracers%data(1)%values, partit%myDim_nod2D, partit, tmin, tmax, tsum)
+    call compute_tracer_stats_atlas(tracers%data(1)%values, partit%myDim_nod2D, partit, trmin(1), trmax(1), trsum(1))
+    call compute_tracer_stats_atlas(tracers%data(2)%values, partit%myDim_nod2D, partit, trmin(2), trmax(2), trsum(2))
   else
-    ! Compute local min/max/sum on this rank
-    tmin_loc = dble(minval(tracers%data(1)%values(:, 1:partit%myDim_nod2D)))
-    tmax_loc = dble(maxval(tracers%data(1)%values(:, 1:partit%myDim_nod2D)))
-    tsum_loc = sum(dble(tracers%data(1)%values(:, 1:partit%myDim_nod2D)))
-
-    ! Reduce across all ranks
-    call MPI_Allreduce(tmin_loc, tmin, 1, MPI_DOUBLE_PRECISION, MPI_MIN, &
+    do ivar = 1, 2
+      trmin_loc(ivar) = dble(minval(tracers%data(ivar)%values(:, 1:partit%myDim_nod2D)))
+      trmax_loc(ivar) = dble(maxval(tracers%data(ivar)%values(:, 1:partit%myDim_nod2D)))
+      trsum_loc(ivar) = sum(dble(tracers%data(ivar)%values(:, 1:partit%myDim_nod2D)))
+    end do
+    call MPI_Allreduce(trmin_loc, trmin, 2, MPI_DOUBLE_PRECISION, MPI_MIN, &
                       partit%MPI_COMM_FESOM, ierr)
-    call MPI_Allreduce(tmax_loc, tmax, 1, MPI_DOUBLE_PRECISION, MPI_MAX, &
+    call MPI_Allreduce(trmax_loc, trmax, 2, MPI_DOUBLE_PRECISION, MPI_MAX, &
                       partit%MPI_COMM_FESOM, ierr)
-    call MPI_Allreduce(tsum_loc, tsum, 1, MPI_DOUBLE_PRECISION, MPI_SUM, &
+    call MPI_Allreduce(trsum_loc, trsum, 2, MPI_DOUBLE_PRECISION, MPI_SUM, &
                       partit%MPI_COMM_FESOM, ierr)
   end if
-  if (atlas_fesom_enabled()) then
-    call compute_tracer_stats_atlas(tracers%data(2)%values, partit%myDim_nod2D, partit, smin, smax, ssum)
-  else
-    ! Compute local min/max/sum on this rank
-    smin_loc = dble(minval(tracers%data(2)%values(:, 1:partit%myDim_nod2D)))
-    smax_loc = dble(maxval(tracers%data(2)%values(:, 1:partit%myDim_nod2D)))
-    ssum_loc = sum(dble(tracers%data(2)%values(:, 1:partit%myDim_nod2D)))
 
-    ! Reduce across all ranks
-    call MPI_Allreduce(smin_loc, smin, 1, MPI_DOUBLE_PRECISION, MPI_MIN, &
-                      partit%MPI_COMM_FESOM, ierr)
-    call MPI_Allreduce(smax_loc, smax, 1, MPI_DOUBLE_PRECISION, MPI_MAX, &
-                      partit%MPI_COMM_FESOM, ierr)
-    call MPI_Allreduce(ssum_loc, ssum, 1, MPI_DOUBLE_PRECISION, MPI_SUM, &
-                      partit%MPI_COMM_FESOM, ierr)
-  end if
 
   if (partit%mype == 0) then
-    write(*, '(A,3E18.10)') '  Temperature: min, max, sum = ', tmin, tmax, tsum
-    write(*, '(A,3E18.10)') '  Salinity:    min, max, sum = ', smin, smax, ssum
+    write(*, '(A,3E18.10)') '  Temperature: min, max, sum = ', trmin(1), trmax(1), trsum(1)
+    write(*, '(A,3E18.10)') '  Salinity:    min, max, sum = ', trmin(2), trmax(2), trsum(2)
     write(*, '(A)') ''
   end if
   
@@ -222,23 +206,23 @@ program tracer_dwarf_mesh_init
     ! Print statistics every step (computed globally across all ranks)
     if (atlas_fesom_enabled()) then
       call compute_tracer_stats_atlas(tracers%data(1)%values, partit%myDim_nod2D, &
-                                       partit, tmin, tmax, tsum)
+                                       partit, trmin(1), trmax(1), trsum(1))
     else
       ! Compute local min/max/sum on this rank
-      tmin_loc = dble(minval(tracers%data(1)%values(:, 1:partit%myDim_nod2D)))
-      tmax_loc = dble(maxval(tracers%data(1)%values(:, 1:partit%myDim_nod2D)))
-      tsum_loc = sum(dble(tracers%data(1)%values(:, 1:partit%myDim_nod2D)))
+      trmin_loc(1) = dble(minval(tracers%data(1)%values(:, 1:partit%myDim_nod2D)))
+      trmax_loc(1) = dble(maxval(tracers%data(1)%values(:, 1:partit%myDim_nod2D)))
+      trsum_loc(1) = sum(dble(tracers%data(1)%values(:, 1:partit%myDim_nod2D)))
 
       ! Reduce across all ranks
-      call MPI_Allreduce(tmin_loc, tmin, 1, MPI_DOUBLE_PRECISION, MPI_MIN, &
+      call MPI_Allreduce(trmin_loc(1), trmin(1), 1, MPI_DOUBLE_PRECISION, MPI_MIN, &
                         partit%MPI_COMM_FESOM, ierr)
-      call MPI_Allreduce(tmax_loc, tmax, 1, MPI_DOUBLE_PRECISION, MPI_MAX, &
+      call MPI_Allreduce(trmax_loc(1), trmax(1), 1, MPI_DOUBLE_PRECISION, MPI_MAX, &
                         partit%MPI_COMM_FESOM, ierr)
-      call MPI_Allreduce(tsum_loc, tsum, 1, MPI_DOUBLE_PRECISION, MPI_SUM, &
+      call MPI_Allreduce(trsum_loc(1), trsum(1), 1, MPI_DOUBLE_PRECISION, MPI_SUM, &
                         partit%MPI_COMM_FESOM, ierr)
     end if
     if (partit%mype == 0) then
-      write(*, '(A,I4,A,3E18.10)') '  Step ', istep, ': T min, max, sum = ', tmin, tmax, tsum
+      write(*, '(A,I4,A,3E18.10)') '  Step ', istep, ': T min, max, sum = ', trmin(1), trmax(1), trsum(1)
     end if
   end do
   
