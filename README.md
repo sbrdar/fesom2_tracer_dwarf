@@ -17,16 +17,14 @@ This generates a 20x20 doubly-periodic triangular mesh with 10 vertical levels a
 Build the Atlas dependencies, then configure the dwarf with Atlas enabled:
 
 ```bash
-./build_atlas.sh --compiler gnu
 ./configure.sh --compiler gnu --precision dp --clean --build --atlas
 ```
 
 CMake delegates to Atlas's `tools/install.sh` with all dependencies, Fortran,
 LZ4, and atlas-fesom enabled. The atlas-fesom dependency path also installs
 METIS. If the Atlas source is absent, CMake clones it into `atlas_deps/atlas`.
-`build_atlas.sh` remains as a compatibility wrapper around CMake. With `--atlas`,
-`configure.sh` enables atlas-fesom caching in the generated run wrapper, allowing
-automatic download of requested FESOM grids.
+With `--atlas`, `configure.sh` enables atlas-fesom caching in the generated run
+wrapper, allowing automatic download of requested FESOM grids.
 The resulting binaries use the standard non-Atlas path by default.
 Set `ATLAS_FESOM=1` at runtime to use Atlas:
 

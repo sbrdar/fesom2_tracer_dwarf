@@ -132,8 +132,9 @@ if(ENABLE_ATLAS)
     if(atlas-fesom_FOUND)
         message(STATUS "atlas-fesom plugin found and enabled")
     else()
-        message(STATUS "atlas-fesom plugin not found (optional; fesom_pi grid will not be available)")
-        message(STATUS "To build it, run: ./build_atlas.sh")
+        message(FATAL_ERROR
+            "atlas-fesom plugin was not installed. Reconfigure with "
+            "-DATLAS_CLEAN_INSTALL=ON to rebuild the Atlas dependency stack.")
     endif()
 endif()
 
