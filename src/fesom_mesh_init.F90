@@ -140,8 +140,8 @@ program tracer_dwarf_mesh_init
   
   ! Compute tracer statistics using Atlas (if available) or MPI_Allreduce
   if (atlas_fesom_enabled()) then
-    call compute_tracer_stats_atlas(tracers%data(1)%values, partit%myDim_nod2D, partit, trmin(1), trmax(1), trsum(1))
-    call compute_tracer_stats_atlas(tracers%data(2)%values, partit%myDim_nod2D, partit, trmin(2), trmax(2), trsum(2))
+    call compute_tracer_stats_atlas(tracers%data(1)%values, trmin(1), trmax(1), trsum(1))
+    call compute_tracer_stats_atlas(tracers%data(2)%values, trmin(2), trmax(2), trsum(2))
   else
     do ivar = 1, 2
       trmin_loc(ivar) = dble(minval(tracers%data(ivar)%values(:, 1:partit%myDim_nod2D)))
@@ -205,8 +205,7 @@ program tracer_dwarf_mesh_init
     
     ! Print statistics every step (computed globally across all ranks)
     if (atlas_fesom_enabled()) then
-      call compute_tracer_stats_atlas(tracers%data(1)%values, partit%myDim_nod2D, &
-                                       partit, trmin(1), trmax(1), trsum(1))
+      call compute_tracer_stats_atlas(tracers%data(1)%values, trmin(1), trmax(1), trsum(1))
     else
       ! Compute local min/max/sum on this rank
       trmin_loc(1) = dble(minval(tracers%data(1)%values(:, 1:partit%myDim_nod2D)))

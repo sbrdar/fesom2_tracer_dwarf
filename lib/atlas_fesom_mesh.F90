@@ -815,10 +815,8 @@ contains
   !! @param[out] tmin Minimum value (real(8))
   !! @param[out] tmax Maximum value (real(8))
   !! @param[out] tsum Sum of all values (real(8))
-  subroutine compute_tracer_stats_atlas(tracer_data, n_owned, partit, tmin, tmax, tsum)
+  subroutine compute_tracer_stats_atlas(tracer_data, tmin, tmax, tsum)
     real(kind=WP), intent(in) :: tracer_data(:,:)
-    integer, intent(in) :: n_owned
-    type(t_partit), intent(in) :: partit
     real(8), intent(out) :: tmin, tmax, tsum
 
 #ifdef ENABLE_ATLAS
@@ -831,16 +829,7 @@ contains
     real(8) :: tmin_loc, tmax_loc, tsum_loc
 
     if (.not. atlas_fesom_active()) then
-      tmin_loc = dble(minval(tracer_data(:, 1:n_owned)))
-      tmax_loc = dble(maxval(tracer_data(:, 1:n_owned)))
-      tsum_loc = sum(dble(tracer_data(:, 1:n_owned)))
-      call MPI_Allreduce(tmin_loc, tmin, 1, MPI_DOUBLE_PRECISION, MPI_MIN, &
-                         partit%MPI_COMM_FESOM, ierr)
-      call MPI_Allreduce(tmax_loc, tmax, 1, MPI_DOUBLE_PRECISION, MPI_MAX, &
-                         partit%MPI_COMM_FESOM, ierr)
-      call MPI_Allreduce(tsum_loc, tsum, 1, MPI_DOUBLE_PRECISION, MPI_SUM, &
-                         partit%MPI_COMM_FESOM, ierr)
-      return
+      stop 'compute_tracer_stats_atlas: Atlas FESOM not active'
     end if
 
     fs = atlas_functionspace_NodeColumns(atlas_mesh_global, halo=atlas_mesh_halo)
@@ -848,12 +837,9 @@ contains
                                    levels=size(tracer_data, 1))
     call tracer_field%data(atlas_tracer)
     node_count = min(size(atlas_tracer, 2), size(tracer_data, 2))
-    if (n_owned > node_count) then
-      error stop 'compute_tracer_stats_atlas: owned-node count exceeds field size'
-    end if
 
     atlas_tracer = 0.0_WP
-    atlas_tracer(:, 1:n_owned) = tracer_data(:, 1:n_owned)
+    atlas_tracer(:, 1:node_count) = tracer_data(:, 1:node_count)
 
     call fs%minimum(tracer_field, tmin_wp)
     call fs%maximum(tracer_field, tmax_wp)
