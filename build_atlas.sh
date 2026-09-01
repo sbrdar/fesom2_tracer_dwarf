@@ -61,30 +61,28 @@ ECKIT_BUILD="${BUILD_BASE}/eckit"
 FCKIT_BUILD="${BUILD_BASE}/fckit"
 ATLAS_BUILD="${BUILD_BASE}/atlas"
 
-# Compiler setup
 case "$COMPILER" in
     gnu)
-        FC=$(which gfortran)
-        CC=$(which gcc)
-        CXX=$(which g++)
+        FC="${FC:-$(command -v gfortran 2>/dev/null || true)}"
+        CC="${CC:-$(command -v gcc 2>/dev/null || true)}"
+        CXX="${CXX:-$(command -v g++ 2>/dev/null || true)}"
         ;;
     intel)
-        source /opt/intel/oneapi/setvars.sh --force > /dev/null 2>&1 || true
-        FC=$(which ifx 2>/dev/null || echo "/opt/intel/oneapi/compiler/latest/bin/ifx")
-        CC=$(which icx 2>/dev/null || echo "/opt/intel/oneapi/compiler/latest/bin/icx")
-        CXX=$(which icpx 2>/dev/null || echo "/opt/intel/oneapi/compiler/latest/bin/icpx")
+        FC="${FC:-$(command -v ifx 2>/dev/null || true)}"
+        CC="${CC:-$(command -v icx 2>/dev/null || true)}"
+        CXX="${CXX:-$(command -v icpx 2>/dev/null || true)}"
         ;;
     nvidia)
-        FC="/opt/nvidia/hpc_sdk/Linux_x86_64/2025/compilers/bin/nvfortran"
-        CC="/opt/nvidia/hpc_sdk/Linux_x86_64/2025/compilers/bin/nvc"
-        CXX="/opt/nvidia/hpc_sdk/Linux_x86_64/2025/compilers/bin/nvc++"
-        ;;
-    *)
-        echo "Error: unknown compiler '$COMPILER'"
-        exit 1
+        FC="${FC:-$(command -v nvfortran 2>/dev/null || true)}"
+        CC="${CC:-$(command -v nvc 2>/dev/null || true)}"
+        CXX="${CXX:-$(command -v nvc++ 2>/dev/null || true)}"
         ;;
 esac
 
+if ! command -v "$FC" >/dev/null 2>&1; then
+    echo "Error: Fortran compiler not found: $FC"
+    exit 1
+fi
 if ! command -v "$CC" >/dev/null 2>&1; then
     echo "Error: C compiler not found: $CC"
     exit 1
@@ -298,11 +296,10 @@ echo "========================================="
 
 # Clone atlas-fesom if not already present
 FESOM_PLUGIN_SOURCE="${DEPS_DIR}/atlas-fesom"
+ATLAS_FESOM_BRANCH=main
 if [ ! -d "$FESOM_PLUGIN_SOURCE" ]; then
     echo "Cloning atlas-fesom from GitHub..."
-    git clone https://github.com/ecmwf/atlas-fesom.git "$FESOM_PLUGIN_SOURCE" 2>&1 | tail -5
-    cd atlas-fesom
-    git checkout fix/ghost
+    git clone -b "$ATLAS_FESOM_BRANCH" https://github.com/ecmwf/atlas-fesom.git "$FESOM_PLUGIN_SOURCE" 2>&1 | tail -5
 else
     echo "atlas-fesom source already present"
 fi
