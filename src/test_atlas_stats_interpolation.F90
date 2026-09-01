@@ -9,7 +9,7 @@
 
 program test_atlas_stats_interpolation
   use atlas_module
-  use atlas_fesom_mesh_module, only: compute_field_stats_atlas
+  use atlas_fesom_mesh_module, only: compute_tracer_stats_atlas, set_atlas_stats_mesh
   use mpi
   use, intrinsic :: iso_c_binding, only: c_double
   implicit none
@@ -27,7 +27,7 @@ program test_atlas_stats_interpolation
   type(atlas_Config)                    :: interp_config
   type(atlas_Interpolation)             :: interpolation
 
-  real(wp), pointer :: data_pi(:)
+  real(wp), pointer :: data_pi(:,:), data_O128(:,:)
   real(wp), pointer :: lonlat(:,:)
 
   real(8)  :: tmin, tmax, tsum
@@ -69,7 +69,7 @@ program test_atlas_stats_interpolation
   if (mype == 0) write(*,'(A,I0,A)') '  fesom-pi local nodes (incl. halo): ', nb_nodes, ''
 
   ! Create 2D scalar field (levels=0) and populate from lon/lat coordinates
-  field_pi     = fs_pi%create_field(name='tracer_pi', kind=atlas_real(wp), levels=0)
+  field_pi     = fs_pi%create_field(name='tracer_pi', kind=atlas_real(wp), levels=1)
   nodes_pi     = fs_pi%nodes()
   lonlat_field = nodes_pi%lonlat()
   call lonlat_field%data(lonlat)
@@ -79,13 +79,14 @@ program test_atlas_stats_interpolation
     lon_r = lonlat(1,jnode) * deg2rad
     lat_r = lonlat(2,jnode) * deg2rad
     ! sin(lat)*cos(lon) + 2 to keep values positive
-    data_pi(jnode) = sin(lat_r) * cos(lon_r) + 2.0_wp
+    data_pi(1,jnode) = sin(lat_r) * cos(lon_r) + 2.0_wp
   end do
 
   call fs_pi%halo_exchange(field_pi)
 
   ! Compute statistics on fesom-pi via Atlas function space reductions
-  call compute_field_stats_atlas(field_pi, fs_pi, tmin, tmax, tsum)
+  call set_atlas_stats_mesh(mesh_pi, halo=1)
+  call compute_tracer_stats_atlas(data_pi, tmin, tmax, tsum)
 
   if (mype == 0) then
     write(*,'(A)') '  fesom-pi tracer stats (sin(lat)*cos(lon) + 2):'
@@ -107,7 +108,8 @@ program test_atlas_stats_interpolation
     write(*,'(A)') ''
   end if
 
-  field_O128 = fs_O128%create_field(name='tracer_O128', kind=atlas_real(wp), levels=0)
+  field_O128 = fs_O128%create_field(name='tracer_O128', kind=atlas_real(wp), levels=1)
+  call field_O128%data(data_O128)
 
   ! ========================================
   ! 3. Finite-element interpolation fesom-pi -> O128
@@ -122,7 +124,8 @@ program test_atlas_stats_interpolation
   call fs_O128%halo_exchange(field_O128)
 
   ! Compute statistics on O128 after interpolation
-  call compute_field_stats_atlas(field_O128, fs_O128, tmin, tmax, tsum)
+  call set_atlas_stats_mesh(mesh_O128, halo=1)
+  call compute_tracer_stats_atlas(data_O128, tmin, tmax, tsum)
 
   if (mype == 0) then
     write(*,'(A)') '  O128 tracer stats (after interpolation from fesom-pi):'

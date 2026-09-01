@@ -37,7 +37,7 @@ module atlas_fesom_mesh_module
   public :: atlas_fesom_enabled, atlas_fesom_active
   public :: atlas_halo_exchange_nodal
 #ifdef ENABLE_ATLAS
-  public :: atlas_mesh_to_fesom_mesh, compute_field_stats_atlas
+  public :: atlas_mesh_to_fesom_mesh, set_atlas_stats_mesh
   ! Module-level Atlas mesh (persists for stats computation)
   type(atlas_Mesh), save :: atlas_mesh_global
   logical, save :: atlas_mesh_active = .false.
@@ -71,6 +71,17 @@ contains
     atlas_fesom_active = .false.
 #endif
   end function atlas_fesom_active
+
+#ifdef ENABLE_ATLAS
+  subroutine set_atlas_stats_mesh(mesh, halo)
+    type(atlas_Mesh), intent(inout) :: mesh
+    integer, intent(in) :: halo
+
+    atlas_mesh_global = mesh
+    atlas_mesh_halo = halo
+    atlas_mesh_active = .true.
+  end subroutine set_atlas_stats_mesh
+#endif
 
   subroutine atlas_halo_exchange_nodal(nodal_data)
     real(kind=WP), intent(inout) :: nodal_data(:,:)
@@ -824,9 +835,6 @@ contains
     type(atlas_Field) :: tracer_field
     real(WP), pointer :: atlas_tracer(:,:)
     real(WP) :: tmin_wp, tmax_wp, tsum_wp
-    integer :: node_count
-    integer :: ierr
-    real(8) :: tmin_loc, tmax_loc, tsum_loc
 
     if (.not. atlas_fesom_active()) then
       stop 'compute_tracer_stats_atlas: Atlas FESOM not active'
@@ -836,10 +844,11 @@ contains
     tracer_field = fs%create_field(name='tracer', kind=atlas_real(WP), &
                                    levels=size(tracer_data, 1))
     call tracer_field%data(atlas_tracer)
-    node_count = min(size(atlas_tracer, 2), size(tracer_data, 2))
-
-    atlas_tracer = 0.0_WP
-    atlas_tracer(:, 1:node_count) = tracer_data(:, 1:node_count)
+    if (size(atlas_tracer, 1) /= size(tracer_data, 1) .or. &
+        size(atlas_tracer, 2) /= size(tracer_data, 2)) then
+      error stop 'compute_tracer_stats_atlas: tracer shape does not match Atlas mesh'
+    end if
+    atlas_tracer = tracer_data
 
     call fs%minimum(tracer_field, tmin_wp)
     call fs%maximum(tracer_field, tmax_wp)
@@ -852,25 +861,5 @@ contains
     call fs%final()
 #endif
   end subroutine compute_tracer_stats_atlas
-
-#ifdef ENABLE_ATLAS
-  !> @brief Compute statistics directly on an Atlas field using NodeColumns
-  !! @details Calls fs%minimum, fs%maximum, and an order-independent sum.
-  !!          The field must be real(8) precision. Results are globally reduced
-  !!          across all MPI ranks by Atlas internally.
-  !! @param[inout] field  Atlas field to compute statistics on
-  !! @param[in]    fs     NodeColumns function space owning the field
-  !! @param[out]   tmin   Global minimum value
-  !! @param[out]   tmax   Global maximum value
-  !! @param[out]   tsum   Global sum of all owned-node values
-  subroutine compute_field_stats_atlas(field, fs, tmin, tmax, tsum)
-    type(atlas_Field),                     intent(inout) :: field
-    type(atlas_functionspace_NodeColumns), intent(in)    :: fs
-    real(8), intent(out) :: tmin, tmax, tsum
-    call fs%minimum(field, tmin)
-    call fs%maximum(field, tmax)
-    call fs%order_independent_sum(field, tsum)
-  end subroutine compute_field_stats_atlas
-#endif
 
 end module atlas_fesom_mesh_module
