@@ -85,13 +85,6 @@ subroutine do_oce_adv_tra(dt, vel, w, wi, we, tr_num, dynamics, tracers, partit,
     fct_minus       => tracers%work%fct_minus
     dttf_h          => tracers%work%del_ttf_advhoriz
     dttf_v          => tracers%work%del_ttf_advvert
-
-#ifdef ENABLE_ATLAS
-    if (atlas_fesom_active()) then
-        call atlas_halo_exchange_nodal(ttf)
-        call atlas_halo_exchange_nodal(ttfAB)
-    end if
-#endif
     
     !___________________________________________________________________________
     ! compute FCT horzontal and vertical low order solution as well as lw order
