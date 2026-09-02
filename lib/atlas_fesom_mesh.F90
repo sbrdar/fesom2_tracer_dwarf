@@ -321,9 +321,9 @@ contains
     atlas_mesh_active = .true.
     call meshgen_obj%FINAL()
     call grid_obj%FINAL()
-    ! Do NOT finalize mesh_obj - it's stored in atlas_mesh_global
+    call mesh_obj%FINAL()
 #else
-    call mesh_setup(partit, mesh)
+    stop 'Atlas support not enabled'
 #endif
 
   end subroutine mesh_setup_with_atlas

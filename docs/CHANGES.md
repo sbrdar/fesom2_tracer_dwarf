@@ -19,8 +19,6 @@
 - Structured Atlas grids such as `O64` now use Atlas-native coordinates and
 	triangulated connectivity. Ghost/PATCH cells and their edges are excluded,
 	and the retained edges follow FESOM's internal/boundary ordering.
-- `ATLAS_FESOM=1 ./run.sh ...` no longer replaces the analytic mesh with an
-	uninitialized mesh or invokes Atlas halo operations without an active mesh.
 - Atlas mesh conversion now uses `atlas_build_edges` and copies Atlas
 	edge-to-node and edge-to-cell connectivity directly into the FESOM mesh.
 	Atlas-local edge ordering and orientation are preserved.
@@ -37,11 +35,6 @@
 - Atlas mesh conversion now maps `nlvls.out` and `elvls.out` onto local nodes
 	and cells by Atlas global index, matching the file-based vertical domain and
 	per-step tracer results.
-- Tracer flux-divergence updates now use the guarded inverse control-volume
-	area, avoiding `0/0` and NaNs at zero-area nodes in distributed Atlas meshes.
-- Atlas mesh conversion now maps canonical `nod2d.out` coordinates and
-	`elem2d.out` connectivity by Atlas global index, then applies the configured
-	coordinate rotation before computing geometry.
 - Atlas tracer statistics now mark overlapping local nodes as ghosts by global
 	node index and use `NodeColumns` field reductions, making min/max/sum
 	diagnostics independent of rank count.
