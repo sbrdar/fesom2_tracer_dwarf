@@ -6,9 +6,6 @@ include(fesom_setup)
 # Option to enable C interface for Python binding
 option(ENABLE_TRACER_C_INTERFACE "Build C interface for tracer library" OFF)
 option(ENABLE_ATLAS "Build with the Atlas backend" OFF)
-option(ATLAS_CLEAN_INSTALL "Remove the local Atlas install and build trees before bootstrapping" OFF)
-set(ATLAS_GIT_REPOSITORY "https://github.com/ecmwf/atlas.git" CACHE STRING "Atlas Git repository")
-set(ATLAS_GIT_VERSION "develop" CACHE STRING "Atlas Git branch or tag")
 
 # Precision options (mutually exclusive)
 option(USE_HALF_PRECISION "Build with half precision (WP=2, FP16)" OFF)
@@ -23,117 +20,40 @@ option(ENABLE_NVTX "enable use of nvtx tools" OFF)
 # Find required packages
 find_package(MPI REQUIRED)
 
-if(CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
-    set(_atlas_compiler_variant gnu)
-elseif(CMAKE_Fortran_COMPILER_ID MATCHES "Intel")
-    set(_atlas_compiler_variant intel)
-elseif(CMAKE_Fortran_COMPILER_ID MATCHES "NVHPC|PGI")
-    set(_atlas_compiler_variant nvidia)
-else()
-    message(FATAL_ERROR "Atlas bootstrap does not support Fortran compiler ${CMAKE_Fortran_COMPILER_ID}")
-endif()
-
-set(_atlas_prefix "${CMAKE_SOURCE_DIR}/atlas_install_${_atlas_compiler_variant}")
-set(_atlas_work_dir "${CMAKE_SOURCE_DIR}/atlas_builds_${_atlas_compiler_variant}")
-set(_atlas_source "${CMAKE_SOURCE_DIR}/atlas_deps/atlas")
-set(_atlas_installer "${_atlas_source}/tools/install.sh")
-set(atlas_DIR "${_atlas_prefix}/lib/cmake/atlas")
-set(atlas-fesom_DIR "${_atlas_prefix}/lib/cmake/atlas-fesom")
-
-if(ATLAS_CLEAN_INSTALL)
-    message(STATUS "Removing local Atlas install and build trees")
-    file(REMOVE_RECURSE "${_atlas_prefix}" "${_atlas_work_dir}")
-endif()
-
-if(NOT EXISTS "${_atlas_source}/.git")
-    if(EXISTS "${_atlas_source}")
-        message(FATAL_ERROR "Atlas source exists but is not a Git checkout: ${_atlas_source}")
-    endif()
-    message(STATUS "Cloning Atlas ${ATLAS_GIT_VERSION}")
-    file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/atlas_deps")
-    execute_process(
-        COMMAND git clone --depth 1 --branch "${ATLAS_GIT_VERSION}"
-                "${ATLAS_GIT_REPOSITORY}" "${_atlas_source}"
-        RESULT_VARIABLE _atlas_clone_result
-        COMMAND_ECHO STDOUT)
-    if(NOT _atlas_clone_result EQUAL 0)
-        message(FATAL_ERROR "Failed to clone Atlas")
-    endif()
-endif()
-
-if(NOT EXISTS "${_atlas_installer}")
-    message(FATAL_ERROR "Atlas installer not found: ${_atlas_installer}")
-endif()
-
-if(NOT EXISTS "${atlas_DIR}/atlas-config.cmake")
-    set(_fckit_cache "${_atlas_work_dir}/builds/fckit/CMakeCache.txt")
-    if(EXISTS "${_fckit_cache}")
-        file(STRINGS "${_fckit_cache}" _cached_eckit_line REGEX "^eckit_DIR:PATH=")
-        string(REGEX REPLACE "^eckit_DIR:PATH=" "" _cached_eckit_dir "${_cached_eckit_line}")
-        string(FIND "${_cached_eckit_dir}" "${_atlas_prefix}/" _cached_eckit_is_local)
-        if(_cached_eckit_dir AND NOT _cached_eckit_is_local EQUAL 0)
-            message(STATUS "Removing stale fckit cache referencing ${_cached_eckit_dir}")
-            file(REMOVE_RECURSE "${_atlas_work_dir}/builds/fckit")
-        endif()
-    endif()
-
-    if(_atlas_compiler_variant STREQUAL "intel")
-        find_program(_atlas_cxx_compiler NAMES icpx REQUIRED)
-    elseif(_atlas_compiler_variant STREQUAL "nvidia")
-        find_program(_atlas_cxx_compiler NAMES nvc++ REQUIRED)
-    else()
-        find_program(_atlas_cxx_compiler NAMES g++ c++ REQUIRED)
-    endif()
-    cmake_host_system_information(RESULT _atlas_jobs QUERY NUMBER_OF_LOGICAL_CORES)
-    set(_atlas_cmake_options
-        "-DCMAKE_C_COMPILER=${CMAKE_C_COMPILER} -DCMAKE_CXX_COMPILER=${_atlas_cxx_compiler} -DCMAKE_Fortran_COMPILER=${CMAKE_Fortran_COMPILER} -DENABLE_MPI=ON -DENABLE_OMP=OFF")
-    message(STATUS "Building Atlas and dependencies in ${_atlas_work_dir}")
-    execute_process(
-        COMMAND "${CMAKE_COMMAND}" -E env
-                --unset=ecbuild_DIR --unset=eckit_DIR --unset=fckit_DIR --unset=atlas_DIR
-                --unset=ecbuild_ROOT --unset=eckit_ROOT --unset=fckit_ROOT --unset=atlas_ROOT
-                bash "${_atlas_installer}"
-                --with-deps --enable-fortran --enable-lz4 --with-atlas-fesom
-                --prefix "${_atlas_prefix}" --work-dir "${_atlas_work_dir}"
-                --build-type Release --parallel "${_atlas_jobs}"
-                --cmake "${_atlas_cmake_options}"
-        RESULT_VARIABLE _atlas_install_result
-        COMMAND_ECHO STDOUT)
-    if(NOT _atlas_install_result EQUAL 0)
-        message(FATAL_ERROR "Atlas dependency installation failed")
-    endif()
-endif()
-
-list(PREPEND CMAKE_PREFIX_PATH "${_atlas_prefix}")
-find_package(atlas REQUIRED PATHS "${atlas_DIR}" NO_DEFAULT_PATH)
-message(STATUS "Atlas backend enabled (local build)")
-
-# Ensure runtime linker can resolve Atlas/eckit/fckit dylibs on macOS.
-# Atlas config dir is usually <prefix>/lib/cmake/atlas, so ../.. is <prefix>/lib.
 set(ATLAS_RUNTIME_LIBDIR "")
-if(DEFINED atlas_DIR AND EXISTS "${atlas_DIR}")
-    get_filename_component(ATLAS_RUNTIME_LIBDIR "${atlas_DIR}/../.." REALPATH)
-elseif(TARGET atlas_f)
-    get_target_property(_atlas_f_loc atlas_f IMPORTED_LOCATION_RELEASE)
-    if(NOT _atlas_f_loc)
-        get_target_property(_atlas_f_loc atlas_f IMPORTED_LOCATION)
+if(ENABLE_ATLAS)
+    if(CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
+        set(_atlas_compiler_variant gnu)
+    elseif(CMAKE_Fortran_COMPILER_ID MATCHES "Intel")
+        set(_atlas_compiler_variant intel)
+    elseif(CMAKE_Fortran_COMPILER_ID MATCHES "NVHPC|PGI")
+        set(_atlas_compiler_variant nvidia)
+    else()
+        message(FATAL_ERROR "Atlas is not configured for Fortran compiler ${CMAKE_Fortran_COMPILER_ID}")
     endif()
-    if(_atlas_f_loc)
-        get_filename_component(ATLAS_RUNTIME_LIBDIR "${_atlas_f_loc}" DIRECTORY)
-    endif()
-endif()
 
-if(ATLAS_RUNTIME_LIBDIR)
+    set(ATLAS_INSTALL_PREFIX
+        "${CMAKE_SOURCE_DIR}/atlas_install_${_atlas_compiler_variant}"
+        CACHE PATH "Prefix of the standalone Atlas installation")
+    set(atlas_DIR "${ATLAS_INSTALL_PREFIX}/lib/cmake/atlas")
+    set(atlas-fesom_DIR "${ATLAS_INSTALL_PREFIX}/lib/cmake/atlas-fesom")
+
+    if(NOT EXISTS "${atlas_DIR}/atlas-config.cmake" OR
+       NOT EXISTS "${atlas-fesom_DIR}/atlas-fesom-config.cmake")
+        message(FATAL_ERROR
+            "Atlas with atlas-fesom was not found under ${ATLAS_INSTALL_PREFIX}. "
+            "Follow 'Standalone Atlas with atlas-fesom' in README.md, or set "
+            "-DATLAS_INSTALL_PREFIX=<install-prefix>.")
+    endif()
+
+    list(PREPEND CMAKE_PREFIX_PATH "${ATLAS_INSTALL_PREFIX}")
+    find_package(atlas REQUIRED CONFIG PATHS "${atlas_DIR}" NO_DEFAULT_PATH)
+    find_package(atlas-fesom REQUIRED CONFIG PATHS "${atlas-fesom_DIR}" NO_DEFAULT_PATH)
+
+    get_filename_component(ATLAS_RUNTIME_LIBDIR
+        "${ATLAS_INSTALL_PREFIX}/lib" REALPATH)
+    message(STATUS "Atlas backend enabled: ${ATLAS_INSTALL_PREFIX}")
     message(STATUS "Atlas runtime lib dir: ${ATLAS_RUNTIME_LIBDIR}")
-endif()
-
-find_package(atlas-fesom QUIET PATHS "${atlas-fesom_DIR}" NO_DEFAULT_PATH)
-if(atlas-fesom_FOUND)
-    message(STATUS "atlas-fesom plugin found and enabled")
-else()
-    message(FATAL_ERROR
-        "atlas-fesom plugin was not installed. Reconfigure with "
-        "-DATLAS_CLEAN_INSTALL=ON to rebuild the Atlas dependency stack.")
 endif()
 
 # Determine library directory - works for both standalone and integrated builds
