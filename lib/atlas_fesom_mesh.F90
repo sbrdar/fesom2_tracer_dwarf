@@ -132,12 +132,7 @@ contains
     logical :: have_dist, use_fesom_generator
 
     if (.not. atlas_fesom_enabled()) then
-      if (partit%mype == 0) then
-        write(output_unit, '(A)') &
-          '  --> ATLAS_FESOM is not 1; using standard FESOM mesh setup'
-      end if
-      call mesh_setup(partit, mesh)
-      return
+      stop 'Atlas FESOM support not enabled'
     end if
 
     ! Use sensible defaults for fesom-pi grid
