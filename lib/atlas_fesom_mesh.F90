@@ -11,7 +11,7 @@ module atlas_fesom_mesh_module
   use MOD_PARTIT
   use o_PARAM, only: WP, MP
   use oce_mesh_module, only: mesh_setup, test_tri, find_levels_min_e2n, &
-                              mesh_areas, mesh_auxiliary_arrays
+                              mesh_areas, mesh_auxiliary_arrays, read_vertical_grid
   use analytic_mesh_module, only: generate_analytic_mesh
   use g_config, only: force_rotation, MeshPath
   use g_rotate_grid, only: set_mesh_transform_matrix, g2r
@@ -26,12 +26,6 @@ module atlas_fesom_mesh_module
 
   implicit none
   private
-
-#if defined(USE_HALF_PRECISION) || defined(USE_SINGLE_PRECISION)
-  integer, parameter :: MPI_MP = MPI_REAL
-#else
-  integer, parameter :: MPI_MP = MPI_DOUBLE_PRECISION
-#endif
 
   public :: mesh_setup_with_atlas, compute_tracer_stats_atlas
   public :: atlas_fesom_enabled, atlas_fesom_active
@@ -149,33 +143,14 @@ contains
     ! Use sensible defaults for fesom-pi grid
     nl_default = 10
 
-    ! Read the vertical profile from aux3d.out, matching read_mesh.
-    if (partit%mype == 0) then
-      open(newunit=funit, file=trim(MeshPath)//'aux3d.out', status='old', &
-           action='read', iostat=io_stat)
-      if (io_stat == 0) then
-        read(funit, *, iostat=io_stat) nl_default
-        if (io_stat == 0 .and. nl_default >= 3) then
-          allocate(zbar_default(nl_default))
-          read(funit, *, iostat=io_stat) zbar_default
-        end if
-        close(funit)
-      end if
-      if (io_stat /= 0 .or. nl_default < 3) then
-        nl_default = 10
-        if (allocated(zbar_default)) deallocate(zbar_default)
-        allocate(zbar_default(nl_default))
-        zbar_default = [( -1000.0_MP * real(r-1, MP) / real(nl_default-1, MP), &
-                          r=1,nl_default )]
-      end if
+    call read_vertical_grid(partit, trim(MeshPath)//'aux3d.out', nl_default, &
+                            zbar_default, io_stat)
+    if (io_stat /= 0) then
+      nl_default = 10
+      allocate(zbar_default(nl_default))
+      zbar_default = [( -1000.0_MP * real(r-1, MP) / real(nl_default-1, MP), &
+                        r=1,nl_default )]
     end if
-    if (partit%npes > 1) then
-      call MPI_BCast(nl_default, 1, MPI_INTEGER, 0, partit%MPI_COMM_FESOM, ierror)
-      if (partit%mype /= 0) allocate(zbar_default(nl_default))
-      call MPI_BCast(zbar_default, nl_default, MPI_MP, 0, &
-                     partit%MPI_COMM_FESOM, ierror)
-    end if
-    if (zbar_default(2) > 0.0_MP) zbar_default = -zbar_default
 
     atlas_grid_name = 'fesom-pi'
     call get_environment_variable('ATLAS_GRID', atlas_grid_name, status=io_stat)

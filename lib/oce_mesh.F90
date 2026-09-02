@@ -16,7 +16,8 @@ module oce_mesh_module
     private
     public :: mesh_setup, read_mesh, find_levels, find_levels_cavity, test_tri, load_edges, &
               find_neighbors, mesh_areas, elem_center, edge_center, mesh_auxiliary_arrays, &
-              find_levels_min_e2n, check_total_volume, check_mesh_consistency, uncompress_partit
+              find_levels_min_e2n, check_total_volume, check_mesh_consistency, uncompress_partit, &
+              read_vertical_grid
 
     ! MPI datatype for WP precision
 #ifdef USE_HALF_PRECISION
@@ -116,6 +117,55 @@ SUBROUTINE uncompress_partit(partit_csr, partition_array)
         partition_array(partit_csr(partition):partit_csr(partition + 1) - 1) = partition
     end do
 END SUBROUTINE uncompress_partit
+!======================================================================
+SUBROUTINE read_vertical_grid(partit, file_name, nl, zbar, read_status, root_unit)
+    type(t_partit), intent(in)                  :: partit
+    character(len=*), intent(in)                :: file_name
+    integer, intent(out)                        :: nl
+    real(kind=MP), allocatable, intent(out)      :: zbar(:)
+    integer, intent(out)                        :: read_status
+    integer, intent(in), optional               :: root_unit
+    integer                                     :: file_unit, mpi_error
+    logical                                     :: file_open
+
+    nl = 0
+    read_status = 0
+    file_unit = 0
+    file_open = .false.
+    if (partit%mype == 0) then
+        if (present(root_unit)) then
+            file_unit = root_unit
+            open(unit=file_unit, file=trim(file_name), status='old', action='read', &
+                 iostat=read_status)
+        else
+            open(newunit=file_unit, file=trim(file_name), status='old', action='read', &
+                 iostat=read_status)
+        end if
+            file_open = read_status == 0
+        if (read_status == 0) read(file_unit, *, iostat=read_status) nl
+        if (read_status == 0 .and. nl < 3) read_status = 1
+    end if
+
+    call MPI_BCast(read_status, 1, MPI_INTEGER, 0, partit%MPI_COMM_FESOM, mpi_error)
+    if (read_status /= 0) then
+        if (partit%mype == 0 .and. file_open) close(file_unit)
+        return
+    end if
+    call MPI_BCast(nl, 1, MPI_INTEGER, 0, partit%MPI_COMM_FESOM, mpi_error)
+
+    allocate(zbar(nl))
+    if (partit%mype == 0) read(file_unit, *, iostat=read_status) zbar
+    call MPI_BCast(read_status, 1, MPI_INTEGER, 0, partit%MPI_COMM_FESOM, mpi_error)
+    if (read_status /= 0) then
+        deallocate(zbar)
+        if (partit%mype == 0) close(file_unit)
+        return
+    end if
+    call MPI_BCast(zbar, nl, MPI_MP, 0, partit%MPI_COMM_FESOM, mpi_error)
+    if (zbar(2) > 0.0_MP) zbar = -zbar
+
+    if (partit%mype == 0 .and. .not. present(root_unit)) close(file_unit)
+END SUBROUTINE read_vertical_grid
 !======================================================================
 ! Reads distributed mesh
 ! The mesh will be read only by 0 proc and broadcasted to the others.
@@ -510,23 +560,17 @@ type(t_partit), intent(inout), target :: partit
     inquire(file=trim(file_name),exist=file_exist)
     !___________________________________________________________________________
     if (file_exist) then
-        if (partit%mype==0) then !open the file for reading on 0 proc
-            open(fileID, file=file_name)
-            read(fileID,*) mesh%nl  ! the number of levels
-        end if
-        call MPI_BCast(mesh%nl, 1, MPI_INTEGER, 0, partit%MPI_COMM_FESOM, ierror)
-        if (mesh%nl < 3) then
-            write(*,*) '!!!Number of levels is less than 3, model will stop!!!'
+        fileID = 10
+        call read_vertical_grid(partit, file_name, mesh%nl, mesh%zbar, &
+                                error_status, fileID)
+        if (error_status /= 0) then
+            write(*,*) '!!!Cannot read at least 3 vertical levels from aux3d.out!!!'
             call par_ex(partit%MPI_COMM_FESOM, partit%mype, 1)
             stop
         end if
-        allocate(mesh%zbar(mesh%nl))              ! allocate the array for storing the standard depths
-        if (partit%mype==0) read(fileID,*) mesh%zbar
-        call MPI_BCast(mesh%zbar, mesh%nl, MPI_WP, 0, partit%MPI_COMM_FESOM, ierror)
-        if(mesh%zbar(2)>0) mesh%zbar=-mesh%zbar   ! zbar is negative
         allocate(mesh%Z(mesh%nl-1))
         mesh%Z=mesh%zbar(1:mesh%nl-1)+mesh%zbar(2:mesh%nl)  ! mid-depths of cells
-        mesh%Z=0.5_WP*mesh%Z
+        mesh%Z=0.5_MP*mesh%Z
     !___________________________________________________________________________
     else
         if (partit%mype==0) then
