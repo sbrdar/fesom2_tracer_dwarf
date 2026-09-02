@@ -15,6 +15,9 @@ program tracer_dwarf_mesh_init
   use atlas_fesom_mesh_module, only: atlas_fesom_enabled, compute_tracer_stats_atlas
   use g_config
   use o_PARAM
+#ifdef ENABLE_ATLAS
+  use atlas_module, only: atlas_initialize, atlas_finalize
+#endif
   
   implicit none
   
@@ -32,6 +35,9 @@ program tracer_dwarf_mesh_init
   ! Initialize MPI first
   ! ========================================
   call MPI_Init(ierr)
+#ifdef ENABLE_ATLAS
+  if (atlas_fesom_enabled()) call atlas_initialize()
+#endif
   partit%MPI_COMM_FESOM = MPI_COMM_WORLD
   
   ! Then call par_init to set up partition info
@@ -236,6 +242,9 @@ program tracer_dwarf_mesh_init
   ! ========================================
   ! Finalize MPI
   ! ========================================
+#ifdef ENABLE_ATLAS
+  if (atlas_fesom_enabled()) call atlas_finalize()
+#endif
   call par_ex(partit%MPI_COMM_FESOM, partit%mype)
   
   if (partit%mype == 0) then

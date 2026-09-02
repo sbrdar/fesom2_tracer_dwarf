@@ -178,9 +178,6 @@ contains
     end if
     if (zbar_default(2) > 0.0_MP) zbar_default = -zbar_default
 
-    ! Initialize Atlas (loads plugins including atlas-fesom, registers grids)
-    call atlas_initialize()
-
     atlas_grid_name = 'fesom-pi'
     call get_environment_variable('ATLAS_GRID', atlas_grid_name, status=io_stat)
     if (io_stat /= 0 .or. len_trim(atlas_grid_name) == 0) then
