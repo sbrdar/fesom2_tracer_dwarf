@@ -40,6 +40,7 @@ module atlas_fesom_mesh_module
   public :: atlas_mesh_to_fesom_mesh, set_atlas_stats_mesh
   ! Module-level Atlas mesh (persists for stats computation)
   type(atlas_Mesh), save :: atlas_mesh_global
+  type(atlas_functionspace_NodeColumns), save :: atlas_nodes_global
   logical, save :: atlas_mesh_active = .false.
   integer, save :: atlas_mesh_halo = 0
 #endif
@@ -79,6 +80,8 @@ contains
 
     atlas_mesh_global = mesh
     atlas_mesh_halo = halo
+    atlas_nodes_global = atlas_functionspace_NodeColumns(atlas_mesh_global, &
+                                                         halo=atlas_mesh_halo)
     atlas_mesh_active = .true.
   end subroutine set_atlas_stats_mesh
 #endif
@@ -86,23 +89,20 @@ contains
   subroutine atlas_halo_exchange_nodal(nodal_data)
     real(kind=WP), intent(inout) :: nodal_data(:,:)
 #ifdef ENABLE_ATLAS
-    type(atlas_functionspace_NodeColumns) :: fs
     type(atlas_Field) :: field
     real(WP), pointer :: field_data(:,:)
 
-    fs = atlas_functionspace_NodeColumns(atlas_mesh_global, halo=atlas_mesh_halo)
-    field = fs%create_field(name='tmp', kind=atlas_real(WP), &
-                            levels=size(nodal_data, 1))
+    field = atlas_nodes_global%create_field(name='tmp', kind=atlas_real(WP), &
+                         levels=size(nodal_data, 1))
     call field%data(field_data)
     if (size(field_data, 2) /= size(nodal_data, 2)) then
       error stop 'atlas_halo_exchange_nodal: field size does not match nodal data'
     end if
     field_data = nodal_data
-    call fs%halo_exchange(field)
+    call atlas_nodes_global%halo_exchange(field)
     nodal_data = field_data
 
     call field%final()
-    call fs%final()
 #endif
   end subroutine atlas_halo_exchange_nodal
 
@@ -131,7 +131,6 @@ contains
     real(kind=MP), allocatable :: zbar_default(:)
     type(atlas_mesh_Nodes) :: mesh_nodes_obj
     type(atlas_mesh_Cells) :: mesh_cells_obj
-    type(atlas_functionspace_NodeColumns) :: fs_dummy
     ! Partition file variables
     integer :: funit, r, node_idx, npes_in_file, error_status, ierror
     integer :: file_rank, owned_count, ghost_count
@@ -292,11 +291,11 @@ contains
 
     if (use_fesom_generator) then
       atlas_mesh_halo = 2
-      fs_dummy = atlas_functionspace_NodeColumns(mesh_obj, halo=2)
     else
       atlas_mesh_halo = 0
-      fs_dummy = atlas_functionspace_NodeColumns(mesh_obj, halo=0)
     end if
+    atlas_nodes_global = atlas_functionspace_NodeColumns(mesh_obj, &
+                                                         halo=atlas_mesh_halo)
 
     ! Get mesh dimensions for logging
     mesh_nodes_obj = mesh_obj%nodes()
@@ -828,7 +827,6 @@ contains
     real(8), intent(out) :: tmin, tmax, tsum
 
 #ifdef ENABLE_ATLAS
-    type(atlas_functionspace_NodeColumns) :: fs
     type(atlas_Field) :: tracer_field
     real(WP), pointer :: atlas_tracer(:,:)
     real(WP) :: tmin_wp, tmax_wp, tsum_wp
@@ -837,9 +835,9 @@ contains
       stop 'compute_tracer_stats_atlas: Atlas FESOM not active'
     end if
 
-    fs = atlas_functionspace_NodeColumns(atlas_mesh_global, halo=atlas_mesh_halo)
-    tracer_field = fs%create_field(name='tracer', kind=atlas_real(WP), &
-                                   levels=size(tracer_data, 1))
+    tracer_field = atlas_nodes_global%create_field(name='tracer', &
+                             kind=atlas_real(WP), &
+                             levels=size(tracer_data, 1))
     call tracer_field%data(atlas_tracer)
     if (size(atlas_tracer, 1) /= size(tracer_data, 1) .or. &
         size(atlas_tracer, 2) /= size(tracer_data, 2)) then
@@ -847,15 +845,14 @@ contains
     end if
     atlas_tracer = tracer_data
 
-    call fs%minimum(tracer_field, tmin_wp)
-    call fs%maximum(tracer_field, tmax_wp)
-    call fs%order_independent_sum(tracer_field, tsum_wp)
+    call atlas_nodes_global%minimum(tracer_field, tmin_wp)
+    call atlas_nodes_global%maximum(tracer_field, tmax_wp)
+    call atlas_nodes_global%order_independent_sum(tracer_field, tsum_wp)
     tmin = dble(tmin_wp)
     tmax = dble(tmax_wp)
     tsum = dble(tsum_wp)
 
     call tracer_field%final()
-    call fs%final()
 #endif
   end subroutine compute_tracer_stats_atlas
 
