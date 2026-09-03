@@ -86,15 +86,8 @@ contains
     type(atlas_Field) :: field
     real(WP), pointer :: field_data(:,:)
 
-    field = atlas_nodes_global%create_field(name='tmp', kind=atlas_real(WP), &
-                         levels=size(nodal_data, 1))
-    call field%data(field_data)
-    if (size(field_data, 2) /= size(nodal_data, 2)) then
-      error stop 'atlas_halo_exchange_nodal: field size does not match nodal data'
-    end if
-    field_data = nodal_data
+    field = atlas_Field(nodal_data)
     call atlas_nodes_global%halo_exchange(field)
-    nodal_data = field_data
 
     call field%final()
 #endif
