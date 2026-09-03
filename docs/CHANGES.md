@@ -10,11 +10,7 @@
 	- `lib/tracer_init_from_mesh.F90`
 	- `lib/tracer_c_interface.F90`
 
-## Build
-
-- CMake now supports `-DENABLE_ATLAS_MESH=ON` and links `atlas_f` when enabled.
-
-## Fixed
+## New features
 
 - Structured Atlas grids such as `O64` now use Atlas-native coordinates and
 	triangulated connectivity. Ghost/PATCH cells and their edges are excluded,
@@ -26,22 +22,17 @@
 	nodes in `my_list*.out` instead of incorrectly treating `rpart.out` counts as
 	contiguous global-node ranges. Both Atlas distribution modes produce stable
 	statistics across MPI rank counts.
-- Atlas tracer sums now use `order_independent_sum`, removing partition-order
+- Atlas tracer sums use `order_independent_sum`, removing partition-order
 	differences from diagnostic reductions.
 - Atlas and file-based runs may differ at the last printed digits because their
 	edge traversal orders differ, while remaining numerically equivalent.
-- Atlas tracer statistics now halo-fill temporary fields before reductions, so
-	zero-initialized ghost slots cannot produce a false minimum for positive fields.
-- Atlas mesh conversion now maps `nlvls.out` and `elvls.out` onto local nodes
-	and cells by Atlas global index, matching the file-based vertical domain and
-	per-step tracer results.
-- Atlas tracer statistics now mark overlapping local nodes as ghosts by global
-	node index and use `NodeColumns` field reductions, making min/max/sum
-	diagnostics independent of rank count.
+- The min/max/sum diagnostics are now independent of rank count.
 - Atlas mesh initialization now reads the complete vertical profile from
 	`aux3d.out`, matching the file-based mesh's tracer layer count and sums.
-- Standalone CMake builds now stage `tests/data` in the build directory for
-	consistent mesh-initialization runs.
+
+## Build
+
+- CMake now supports `-DENABLE_ATLAS=ON` and links `atlas_f` when enabled.
 
 # Changelog
 
