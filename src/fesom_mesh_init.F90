@@ -179,7 +179,7 @@ program tracer_dwarf_mesh_init
   end if
   
   nsteps = 10
-  dt_local = 1.0e-3_WP
+  dt_local = 360.0_WP
   
   if (partit%mype == 0) then
     write(*, '(A,I6,A,E12.4)') '  Steps: ', nsteps, ', dt = ', dt_local
