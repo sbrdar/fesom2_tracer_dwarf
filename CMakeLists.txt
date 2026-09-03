@@ -21,40 +21,38 @@ option(ENABLE_NVTX "enable use of nvtx tools" OFF)
 find_package(MPI REQUIRED)
 
 set(ATLAS_RUNTIME_LIBDIR "")
-if(ENABLE_ATLAS)
-    if(CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
-        set(_atlas_compiler_variant gnu)
-    elseif(CMAKE_Fortran_COMPILER_ID MATCHES "Intel")
-        set(_atlas_compiler_variant intel)
-    elseif(CMAKE_Fortran_COMPILER_ID MATCHES "NVHPC|PGI")
-        set(_atlas_compiler_variant nvidia)
-    else()
-        message(FATAL_ERROR "Atlas is not configured for Fortran compiler ${CMAKE_Fortran_COMPILER_ID}")
-    endif()
-
-    set(ATLAS_INSTALL_PREFIX
-        "${CMAKE_SOURCE_DIR}/atlas_install_${_atlas_compiler_variant}"
-        CACHE PATH "Prefix of the standalone Atlas installation")
-    set(atlas_DIR "${ATLAS_INSTALL_PREFIX}/lib/cmake/atlas")
-    set(atlas-fesom_DIR "${ATLAS_INSTALL_PREFIX}/lib/cmake/atlas-fesom")
-
-    if(NOT EXISTS "${atlas_DIR}/atlas-config.cmake" OR
-       NOT EXISTS "${atlas-fesom_DIR}/atlas-fesom-config.cmake")
-        message(FATAL_ERROR
-            "Atlas with atlas-fesom was not found under ${ATLAS_INSTALL_PREFIX}. "
-            "Follow 'Standalone Atlas with atlas-fesom' in README.md, or set "
-            "-DATLAS_INSTALL_PREFIX=<install-prefix>.")
-    endif()
-
-    list(PREPEND CMAKE_PREFIX_PATH "${ATLAS_INSTALL_PREFIX}")
-    find_package(atlas REQUIRED CONFIG PATHS "${atlas_DIR}" NO_DEFAULT_PATH)
-    find_package(atlas-fesom REQUIRED CONFIG PATHS "${atlas-fesom_DIR}" NO_DEFAULT_PATH)
-
-    get_filename_component(ATLAS_RUNTIME_LIBDIR
-        "${ATLAS_INSTALL_PREFIX}/lib" REALPATH)
-    message(STATUS "Atlas backend enabled: ${ATLAS_INSTALL_PREFIX}")
-    message(STATUS "Atlas runtime lib dir: ${ATLAS_RUNTIME_LIBDIR}")
+if(CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
+    set(_atlas_compiler_variant gnu)
+elseif(CMAKE_Fortran_COMPILER_ID MATCHES "Intel")
+    set(_atlas_compiler_variant intel)
+elseif(CMAKE_Fortran_COMPILER_ID MATCHES "NVHPC|PGI")
+    set(_atlas_compiler_variant nvidia)
+else()
+    message(FATAL_ERROR "Atlas is not configured for Fortran compiler ${CMAKE_Fortran_COMPILER_ID}")
 endif()
+
+set(ATLAS_INSTALL_PREFIX
+    "${CMAKE_SOURCE_DIR}/atlas_install_${_atlas_compiler_variant}"
+    CACHE PATH "Prefix of the standalone Atlas installation")
+set(atlas_DIR "${ATLAS_INSTALL_PREFIX}/lib/cmake/atlas")
+set(atlas-fesom_DIR "${ATLAS_INSTALL_PREFIX}/lib/cmake/atlas-fesom")
+
+if(NOT EXISTS "${atlas_DIR}/atlas-config.cmake" OR
+    NOT EXISTS "${atlas-fesom_DIR}/atlas-fesom-config.cmake")
+    message(FATAL_ERROR
+        "Atlas with atlas-fesom was not found under ${ATLAS_INSTALL_PREFIX}. "
+        "Follow 'Standalone Atlas with atlas-fesom' in README.md, or set "
+        "-DATLAS_INSTALL_PREFIX=<install-prefix>.")
+endif()
+
+list(PREPEND CMAKE_PREFIX_PATH "${ATLAS_INSTALL_PREFIX}")
+find_package(atlas REQUIRED CONFIG PATHS "${atlas_DIR}" NO_DEFAULT_PATH)
+find_package(atlas-fesom REQUIRED CONFIG PATHS "${atlas-fesom_DIR}" NO_DEFAULT_PATH)
+
+get_filename_component(ATLAS_RUNTIME_LIBDIR
+    "${ATLAS_INSTALL_PREFIX}/lib" REALPATH)
+message(STATUS "Atlas backend enabled: ${ATLAS_INSTALL_PREFIX}")
+message(STATUS "Atlas runtime lib dir: ${ATLAS_RUNTIME_LIBDIR}")
 
 # Determine library directory - works for both standalone and integrated builds
 if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
