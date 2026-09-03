@@ -189,8 +189,7 @@ contains
     end if
 
     ! Convert atlas mesh to FESOM mesh
-    call atlas_mesh_to_fesom_mesh(mesh_obj, zbar_default, partit, mesh, &
-                    use_fesom_generator)
+    call atlas_mesh_to_fesom_mesh(mesh_obj, zbar_default, partit, mesh)
     partit%myDim_elem2D_shrinked = mesh%elem2D
     deallocate(zbar_default)
 
@@ -311,13 +310,11 @@ contains
   !! @param[in]    zbar       Vertical interface depths
   !! @param[inout] partit     FESOM partition structure (filled for npes=1)
   !! @param[inout] mesh3      Output FESOM t_mesh (must be uninitialised)
-  subroutine atlas_mesh_to_fesom_mesh(atlas_msh, zbar, partit, mesh3, &
-                                      use_canonical_fesom)
+  subroutine atlas_mesh_to_fesom_mesh(atlas_msh, zbar, partit, mesh3)
     type(atlas_Mesh),   intent(inout) :: atlas_msh
     real(kind=MP),      intent(in)    :: zbar(:)
     type(t_partit),     intent(inout) :: partit
     type(t_mesh),       intent(inout) :: mesh3
-    logical, intent(in), optional     :: use_canonical_fesom
 
     ! Atlas helper objects
     type(atlas_mesh_Nodes)             :: atlas_nodes
@@ -345,17 +342,11 @@ contains
     ! Mesh dimensions
     integer :: nnodes, ncells, atlas_ncells, nl, edge2D_local, edge2D_in_local
     integer :: atlas_edge_count
-    integer :: global_nnodes, global_ncells, local_global_nnodes
-    integer :: local_global_ncells, file_unit, io_stat
-    integer :: canonical_node_count
-    integer, allocatable :: global_node_levels(:), global_cell_levels(:)
-    integer, allocatable :: canonical_elements(:,:)
     integer, allocatable :: edge_old_to_new(:)
-    real(kind=MP), allocatable :: canonical_lonlat(:,:)
 
-    integer :: i, j, canonical_cell_count, global_node_id, canonical_node_flag
+    integer :: i, j
     integer :: tmp_el
-    logical :: canonical_fesom, patch_seen
+    logical :: patch_seen
 
     ! Edge classification
     integer :: n_internal
@@ -365,7 +356,7 @@ contains
     real(kind=WP) :: geographic_lon, geographic_lat, rotated_lon, rotated_lat
 
     ! Owned vs ghost node split
-    integer :: n_owned, n_ghost, ierror
+    integer :: n_owned, n_ghost
 
     real(MP), parameter :: deg2rad = acos(-1.0_MP) / 180.0_MP
 
@@ -378,26 +369,22 @@ contains
     atlas_ncells = int(atlas_cells%size())
     ncells = atlas_ncells
     nl = size(zbar)
-    canonical_fesom = .true.
-    if (present(use_canonical_fesom)) canonical_fesom = use_canonical_fesom
 
-    if (.not. canonical_fesom) then
-      cell_flags_field = atlas_cells%field('flags')
-      call cell_flags_field%data(cell_flags)
-      ncells = 0
-      patch_seen = .false.
-      do e = 1, atlas_ncells
-        if (iand(cell_flags(e), 258_c_int) /= 0) then
-          patch_seen = .true.
-        else
-          if (patch_seen) then
-            error stop 'Atlas ghost/PATCH cells are not stored after owned cells'
-          end if
-          ncells = ncells + 1
+    cell_flags_field = atlas_cells%field('flags')
+    call cell_flags_field%data(cell_flags)
+    ncells = 0
+    patch_seen = .false.
+    do e = 1, atlas_ncells
+      if (iand(cell_flags(e), 258_c_int) /= 0) then
+        patch_seen = .true.
+      else
+        if (patch_seen) then
+          error stop 'Atlas ghost/PATCH cells are not stored after owned cells'
         end if
-      end do
-      call cell_flags_field%final()
-    end if
+        ncells = ncells + 1
+      end if
+    end do
+    call cell_flags_field%final()
 
     node_global_index_field = atlas_nodes%global_index()
     cell_global_index_field = atlas_cells%global_index()
@@ -426,93 +413,36 @@ contains
     end if
 
     ! ------------------------------------------------------------------
-    ! 2. Canonical node coordinates: lon/lat degrees -> radians
+    ! 2. Atlas node coordinates: lon/lat degrees -> radians
     ! ------------------------------------------------------------------
     mesh3%nod2D = nnodes
     allocate(mesh3%coord_nod2D(2, nnodes))
     call set_mesh_transform_matrix()
-    if (canonical_fesom) then
-      open(newunit=file_unit, file=trim(MeshPath)//'nod2d.out', &
-           status='old', action='read', iostat=io_stat)
-      if (io_stat /= 0) error stop 'Cannot open nod2d.out for Atlas mesh'
-      read(file_unit, *, iostat=io_stat) canonical_node_count
-      if (io_stat /= 0) error stop 'Cannot read nod2d.out header for Atlas mesh'
-      allocate(canonical_lonlat(2, canonical_node_count))
-      do n = 1, canonical_node_count
-        read(file_unit, *, iostat=io_stat) i, canonical_lonlat(:, n), canonical_node_flag
-        if (io_stat /= 0 .or. i /= n) error stop 'Cannot read nod2d.out for Atlas mesh'
-      end do
-      close(file_unit)
-      do n = 1, nnodes
-        geographic_lon = real(canonical_lonlat(1, int(node_global_index(n))) * deg2rad, WP)
-        geographic_lat = real(canonical_lonlat(2, int(node_global_index(n))) * deg2rad, WP)
-        if (force_rotation) then
-          call g2r(geographic_lon, geographic_lat, rotated_lon, rotated_lat)
-          mesh3%coord_nod2D(1, n) = real(rotated_lon, MP)
-          mesh3%coord_nod2D(2, n) = real(rotated_lat, MP)
-        else
-          mesh3%coord_nod2D(1, n) = real(geographic_lon, MP)
-          mesh3%coord_nod2D(2, n) = real(geographic_lat, MP)
-        end if
-      end do
-      deallocate(canonical_lonlat)
-    else
-      node_lonlat_field = atlas_nodes%lonlat()
-      call node_lonlat_field%data(node_lonlat)
-      do n = 1, nnodes
-        geographic_lon = real(node_lonlat(1, n) * deg2rad, WP)
-        geographic_lat = real(node_lonlat(2, n) * deg2rad, WP)
-        if (force_rotation) then
-          call g2r(geographic_lon, geographic_lat, rotated_lon, rotated_lat)
-          mesh3%coord_nod2D(:, n) = real([rotated_lon, rotated_lat], MP)
-        else
-          mesh3%coord_nod2D(:, n) = real([geographic_lon, geographic_lat], MP)
-        end if
-      end do
-      call node_lonlat_field%final()
-    end if
+    node_lonlat_field = atlas_nodes%lonlat()
+    call node_lonlat_field%data(node_lonlat)
+    do n = 1, nnodes
+      geographic_lon = real(node_lonlat(1, n) * deg2rad, WP)
+      geographic_lat = real(node_lonlat(2, n) * deg2rad, WP)
+      if (force_rotation) then
+        call g2r(geographic_lon, geographic_lat, rotated_lon, rotated_lat)
+        mesh3%coord_nod2D(:, n) = real([rotated_lon, rotated_lat], MP)
+      else
+        mesh3%coord_nod2D(:, n) = real([geographic_lon, geographic_lat], MP)
+      end if
+    end do
+    call node_lonlat_field%final()
 
     ! ------------------------------------------------------------------
-    ! 3. Cell connectivity in canonical FESOM vertex order
+    ! 3. Atlas cell connectivity
     ! ------------------------------------------------------------------
     mesh3%elem2D = ncells
     allocate(mesh3%elem2D_nodes(3, ncells))
-    if (canonical_fesom) then
-      open(newunit=file_unit, file=trim(MeshPath)//'elem2d.out', &
-           status='old', action='read', iostat=io_stat)
-      if (io_stat /= 0) error stop 'Cannot open elem2d.out for Atlas mesh'
-      read(file_unit, *, iostat=io_stat) canonical_cell_count
-      if (io_stat /= 0) error stop 'Cannot read elem2d.out header for Atlas mesh'
-      allocate(canonical_elements(3, canonical_cell_count))
-      do e = 1, canonical_cell_count
-        read(file_unit, *, iostat=io_stat) canonical_elements(:, e)
-        if (io_stat /= 0) error stop 'Cannot read elem2d.out for Atlas mesh'
-      end do
-      close(file_unit)
-      do e = 1, ncells
-        do k = 1, 3
-          global_node_id = canonical_elements(k, int(cell_global_index(e)))
-          mesh3%elem2D_nodes(k, e) = 0
-          do n = 1, nnodes
-            if (int(node_global_index(n)) == global_node_id) then
-              mesh3%elem2D_nodes(k, e) = n
-              exit
-            end if
-          end do
-          if (mesh3%elem2D_nodes(k, e) == 0) then
-            error stop 'Canonical FESOM cell references a node absent from Atlas mesh'
-          end if
-        end do
-      end do
-      deallocate(canonical_elements)
-    else
-      atlas_cell_nodes = atlas_cells%node_connectivity()
-      call atlas_cell_nodes%padded_data(cell_nodes, cell_node_cols)
-      if (any(cell_node_cols /= 3)) then
-        error stop 'Atlas grid conversion requires triangular cells'
-      end if
-      mesh3%elem2D_nodes = int(cell_nodes(1:3, 1:ncells))
+    atlas_cell_nodes = atlas_cells%node_connectivity()
+    call atlas_cell_nodes%padded_data(cell_nodes, cell_node_cols)
+    if (any(cell_node_cols /= 3)) then
+      error stop 'Atlas grid conversion requires triangular cells'
     end if
+    mesh3%elem2D_nodes = int(cell_nodes(1:3, 1:ncells))
 
     ! ------------------------------------------------------------------
     ! 4. Vertical structure from aux3d.out, with a flat bottom
@@ -676,46 +606,8 @@ contains
     allocate(mesh3%nlevels_nod2D(nnodes))
     allocate(mesh3%bc_index_nod2D(nnodes));   mesh3%bc_index_nod2D = 0
 
-    local_global_nnodes = int(maxval(node_global_index))
-    local_global_ncells = int(maxval(cell_global_index))
-    call MPI_Allreduce(local_global_nnodes, global_nnodes, 1, MPI_INTEGER, &
-                       MPI_MAX, partit%MPI_COMM_FESOM, ierror)
-    call MPI_Allreduce(local_global_ncells, global_ncells, 1, MPI_INTEGER, &
-                       MPI_MAX, partit%MPI_COMM_FESOM, ierror)
-    allocate(global_node_levels(global_nnodes))
-    allocate(global_cell_levels(global_ncells))
-
-    if (canonical_fesom .and. partit%mype == 0) then
-      open(newunit=file_unit, file=trim(MeshPath)//'nlvls.out', status='old', &
-           action='read', iostat=io_stat)
-      if (io_stat /= 0) error stop 'Cannot open nlvls.out for Atlas mesh'
-      read(file_unit, *, iostat=io_stat) global_node_levels
-      close(file_unit)
-      if (io_stat /= 0) error stop 'Cannot read nlvls.out for Atlas mesh'
-
-      open(newunit=file_unit, file=trim(MeshPath)//'elvls.out', status='old', &
-           action='read', iostat=io_stat)
-      if (io_stat /= 0) error stop 'Cannot open elvls.out for Atlas mesh'
-      read(file_unit, *, iostat=io_stat) global_cell_levels
-      close(file_unit)
-      if (io_stat /= 0) error stop 'Cannot read elvls.out for Atlas mesh'
-    end if
-    if (canonical_fesom) then
-      call MPI_BCast(global_node_levels, global_nnodes, MPI_INTEGER, 0, &
-                     partit%MPI_COMM_FESOM, ierror)
-      call MPI_BCast(global_cell_levels, global_ncells, MPI_INTEGER, 0, &
-                     partit%MPI_COMM_FESOM, ierror)
-      do n = 1, nnodes
-        mesh3%nlevels_nod2D(n) = global_node_levels(int(node_global_index(n)))
-      end do
-      do e = 1, ncells
-        mesh3%nlevels(e) = global_cell_levels(int(cell_global_index(e)))
-      end do
-    else
-      mesh3%nlevels_nod2D = nl
-      mesh3%nlevels = nl
-    end if
-    deallocate(global_node_levels, global_cell_levels)
+    mesh3%nlevels_nod2D = nl
+    mesh3%nlevels = nl
 
     ! ------------------------------------------------------------------
     ! 9. elem_neighbors and nod_in_elem2D
