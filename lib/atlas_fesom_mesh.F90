@@ -31,7 +31,7 @@ module atlas_fesom_mesh_module
   public :: atlas_fesom_enabled, atlas_fesom_active
   public :: atlas_halo_exchange_nodal
 #ifdef ENABLE_ATLAS
-  public :: atlas_mesh_to_fesom_mesh, set_atlas_stats_mesh
+  public :: atlas_mesh_to_fesom_mesh, set_atlas_stats_mesh, set_fesom_dist
   ! Module-level Atlas mesh (persists for stats computation)
   type(atlas_Mesh), save :: atlas_mesh_global
   type(atlas_functionspace_NodeColumns), save :: atlas_nodes_global
@@ -108,20 +108,12 @@ contains
     type(atlas_Config)          :: meshgen_config
 
     integer :: io_stat
-    character(len=32)  :: use_fesom_dist_str
     character(len=256) :: atlas_grid_name
-    character(len=10)  :: npes_string
-    character(len=256) :: dist_mesh_dir, rpart_file, owner_file
-    character(len=5) :: rank_string
-    integer :: ncells, nnodes
+    integer :: ncells, nnodes, r
     integer :: nl_default
     real(kind=MP), allocatable :: zbar_default(:)
     type(atlas_mesh_Nodes) :: mesh_nodes_obj
     type(atlas_mesh_Cells) :: mesh_cells_obj
-    ! Partition file variables
-    integer :: funit, r, node_idx, npes_in_file, error_status, ierror
-    integer :: file_rank, owned_count, ghost_count
-    integer, allocatable :: part_csr(:), part_per_node(:), local_node_list(:)
     logical :: have_dist, use_fesom_generator
 
     if (.not. atlas_fesom_enabled()) then
@@ -156,85 +148,7 @@ contains
     write(output_unit, *) '  --> Atlas grid found: ', grid_obj%name()
     use_fesom_generator = index(trim(grid_obj%name()), 'fesom-pi') == 1
 
-    ! Optionally drive Atlas mesh distribution from the standard FESOM owner lists.
-    ! Set ATLAS_USE_FESOM_DIST=1 to enable; rpart.out and my_list*.out are read
-    ! from the same dist_<npes>/ directory as the non-Atlas mesh_setup() path.
-    have_dist = .false.
-    call get_environment_variable('ATLAS_USE_FESOM_DIST', use_fesom_dist_str, &
-                                  status=io_stat)
-    if (io_stat /= 0) use_fesom_dist_str = '0'
-    if (trim(use_fesom_dist_str) == '1')
-      write(npes_string, "(I10)") partit%npes
-      dist_mesh_dir = trim(MeshPath)//'dist_'//trim(ADJUSTL(npes_string))//'/'
-      rpart_file    = trim(dist_mesh_dir)//'rpart.out'
-      error_status  = 0
-      if (partit%mype == 0) then
-        open(newunit=funit, file=trim(rpart_file), action='read', status='old', &
-             iostat=io_stat)
-        if (io_stat /= 0) then
-          write(output_unit, '(3A)') &
-            '  WARNING: ATLAS_USE_FESOM_DIST=1 but cannot open ', &
-            trim(rpart_file), ' — using default Atlas distribution'
-          error_status = 1
-        else
-          allocate(part_csr(partit%npes+1))
-          read(funit, *) npes_in_file
-          if (npes_in_file /= partit%npes) error_status = 1
-          part_csr(1) = 1
-          read(funit, *) part_csr(2:partit%npes+1)
-          ! Convert per-partition counts to cumulative offsets (same as read_mesh)
-          do r = 2, partit%npes+1
-            part_csr(r) = part_csr(r-1) + part_csr(r)
-          end do
-          close(funit)
-        end if
-      end if
-      if (partit%npes > 1) then
-        call MPI_BCast(error_status, 1, MPI_INTEGER, 0, &
-                       partit%MPI_COMM_FESOM, ierror)
-        if (error_status == 0) then
-          if (partit%mype /= 0) allocate(part_csr(partit%npes+1))
-          call MPI_BCast(part_csr, partit%npes+1, MPI_INTEGER, 0, &
-                         partit%MPI_COMM_FESOM, ierror)
-        end if
-      end if
-      if (error_status == 0) then
-        allocate(part_per_node(int(grid_obj%size())))
-        part_per_node = -1
-        if (partit%mype == 0) then
-          do r = 0, partit%npes - 1
-            write(rank_string, '(I5.5)') r
-            owner_file = trim(dist_mesh_dir)//'my_list'//rank_string//'.out'
-            open(newunit=funit, file=trim(owner_file), action='read', status='old', &
-                 iostat=io_stat)
-            if (io_stat /= 0) error stop 'Cannot open FESOM partition owner list'
-            read(funit, *) file_rank
-            read(funit, *) owned_count
-            read(funit, *) ghost_count
-            if (file_rank /= r) error stop 'Unexpected rank in FESOM partition owner list'
-            allocate(local_node_list(owned_count + ghost_count))
-            read(funit, *) local_node_list
-            close(funit)
-            do node_idx = 1, owned_count
-              part_per_node(local_node_list(node_idx)) = r
-            end do
-            deallocate(local_node_list)
-          end do
-          if (any(part_per_node < 0)) error stop 'Incomplete FESOM node ownership map'
-        end if
-        call MPI_BCast(part_per_node, int(grid_obj%size()), MPI_INTEGER, 0, &
-                       partit%MPI_COMM_FESOM, ierror)
-        deallocate(part_csr)
-        dist_obj   = atlas_GridDistribution(part_per_node)
-        deallocate(part_per_node)
-        have_dist  = .true.
-        if (partit%mype == 0) write(output_unit, '(3A,I0,A)') &
-          '  --> ATLAS_USE_FESOM_DIST: using partition from ', &
-          trim(rpart_file), ' (', partit%npes, ' partitions)'
-      else
-        if (allocated(part_csr)) deallocate(part_csr)
-      end if
-    end if
+    call set_fesom_dist(partit, grid_obj, dist_obj, have_dist)
 
     ! Create mesh generator and generate mesh
     if (use_fesom_generator) then
@@ -293,6 +207,100 @@ contains
   end subroutine mesh_setup_with_atlas
 
 #ifdef ENABLE_ATLAS
+  !> @brief Set Atlas distribution from the standard FESOM owner lists
+  subroutine set_fesom_dist(partit, grid_obj, dist_obj, have_dist)
+    type(t_partit), intent(in) :: partit
+    type(atlas_Grid), intent(inout) :: grid_obj
+    type(atlas_GridDistribution), intent(out) :: dist_obj
+    logical, intent(out) :: have_dist
+
+    character(len=32) :: use_fesom_dist_str
+    character(len=256) :: dist_mesh_dir, rpart_file, owner_file
+    character(len=10) :: npes_string
+    character(len=5) :: rank_string
+    integer :: funit, r, node_idx, npes_in_file, error_status, ierror, io_stat
+    integer :: file_rank, owned_count, ghost_count
+    integer, allocatable :: part_csr(:), part_per_node(:), local_node_list(:)
+
+    have_dist = .false.
+    call get_environment_variable('ATLAS_USE_FESOM_DIST', use_fesom_dist_str, &
+                                  status=io_stat)
+    if (io_stat /= 0) use_fesom_dist_str = '0'
+    if (trim(use_fesom_dist_str) /= '1') return
+
+    write(npes_string, "(I10)") partit%npes
+    dist_mesh_dir = trim(MeshPath)//'dist_'//trim(adjustl(npes_string))//'/'
+    rpart_file = trim(dist_mesh_dir)//'rpart.out'
+    error_status = 0
+    if (partit%mype == 0) then
+      open(newunit=funit, file=trim(rpart_file), action='read', status='old', &
+           iostat=io_stat)
+      if (io_stat /= 0) then
+        write(output_unit, '(3A)') &
+          '  WARNING: ATLAS_USE_FESOM_DIST=1 but cannot open ', &
+          trim(rpart_file), ' - using default Atlas distribution'
+        error_status = 1
+      else
+        allocate(part_csr(partit%npes+1))
+        read(funit, *) npes_in_file
+        if (npes_in_file /= partit%npes) error_status = 1
+        part_csr(1) = 1
+        read(funit, *) part_csr(2:partit%npes+1)
+        do r = 2, partit%npes+1
+          part_csr(r) = part_csr(r-1) + part_csr(r)
+        end do
+        close(funit)
+      end if
+    end if
+
+    if (partit%npes > 1) then
+      call MPI_BCast(error_status, 1, MPI_INTEGER, 0, &
+                     partit%MPI_COMM_FESOM, ierror)
+      if (error_status == 0) then
+        if (partit%mype /= 0) allocate(part_csr(partit%npes+1))
+        call MPI_BCast(part_csr, partit%npes+1, MPI_INTEGER, 0, &
+                       partit%MPI_COMM_FESOM, ierror)
+      end if
+    end if
+
+    if (error_status == 0) then
+      allocate(part_per_node(int(grid_obj%size())))
+      part_per_node = -1
+      if (partit%mype == 0) then
+        do r = 0, partit%npes - 1
+          write(rank_string, '(I5.5)') r
+          owner_file = trim(dist_mesh_dir)//'my_list'//rank_string//'.out'
+          open(newunit=funit, file=trim(owner_file), action='read', status='old', &
+               iostat=io_stat)
+          if (io_stat /= 0) error stop 'Cannot open FESOM partition owner list'
+          read(funit, *) file_rank
+          read(funit, *) owned_count
+          read(funit, *) ghost_count
+          if (file_rank /= r) error stop 'Unexpected rank in FESOM partition owner list'
+          allocate(local_node_list(owned_count + ghost_count))
+          read(funit, *) local_node_list
+          close(funit)
+          do node_idx = 1, owned_count
+            part_per_node(local_node_list(node_idx)) = r
+          end do
+          deallocate(local_node_list)
+        end do
+        if (any(part_per_node < 0)) error stop 'Incomplete FESOM node ownership map'
+      end if
+      call MPI_BCast(part_per_node, int(grid_obj%size()), MPI_INTEGER, 0, &
+                     partit%MPI_COMM_FESOM, ierror)
+      deallocate(part_csr)
+      dist_obj = atlas_GridDistribution(part_per_node)
+      deallocate(part_per_node)
+      have_dist = .true.
+      if (partit%mype == 0) write(output_unit, '(3A,I0,A)') &
+        '  --> ATLAS_USE_FESOM_DIST: using partition from ', &
+        trim(rpart_file), ' (', partit%npes, ' partitions)'
+    else
+      if (allocated(part_csr)) deallocate(part_csr)
+    end if
+  end subroutine set_fesom_dist
+
   !> @brief Convert an Atlas mesh to a FESOM t_mesh
   !! @details Extracts node coordinates and triangle connectivity, asks Atlas
   !!          to build edge topology, maps it into the FESOM t_mesh arrays,
