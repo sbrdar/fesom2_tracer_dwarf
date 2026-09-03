@@ -162,7 +162,8 @@ contains
     have_dist = .false.
     call get_environment_variable('ATLAS_USE_FESOM_DIST', use_fesom_dist_str, &
                                   status=io_stat)
-    if (io_stat == 0 .and. trim(use_fesom_dist_str) == '1') then
+    if (io_stat /= 0) use_fesom_dist_str = '0'
+    if (trim(use_fesom_dist_str) == '1')
       write(npes_string, "(I10)") partit%npes
       dist_mesh_dir = trim(MeshPath)//'dist_'//trim(ADJUSTL(npes_string))//'/'
       rpart_file    = trim(dist_mesh_dir)//'rpart.out'
