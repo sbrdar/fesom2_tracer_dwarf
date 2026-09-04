@@ -326,8 +326,11 @@ contains
 
     ! Mesh dimensions
     integer :: nnodes, ncells, atlas_ncells, nl, edge2D_local, edge2D_in_local
+    integer :: global_nnodes, global_ncells, global_edges, global_internal_edges
+    integer :: owned_edges, owned_internal_edges, owner_node, ierror
     integer :: atlas_edge_count
     integer, allocatable :: edge_old_to_new(:)
+    logical, allocatable :: node_owned(:)
 
     integer :: i, j
     integer :: tmp_el
@@ -379,18 +382,25 @@ contains
     ghost_field = atlas_nodes%ghost()
     n_owned = 0
     n_ghost = 0
+    allocate(node_owned(nnodes))
     call ghost_field%data(node_ghost)
     do n=1, nnodes
       if (node_ghost(n) == 0_c_int) then
+        node_owned(n) = .true.
         n_owned = n_owned + 1
         if (n_ghost > 0) then
           STOP 'Atlas mesh has owned nodes after ghost nodes; fesom_mesh requires all owned nodes first'
         end if
       else
+        node_owned(n) = .false.
         n_ghost = n_ghost + 1
       end if
     end do
     call ghost_field%final()
+    call MPI_Allreduce(n_owned, global_nnodes, 1, MPI_INTEGER, MPI_SUM, &
+                       partit%MPI_COMM_FESOM, ierror)
+    call MPI_Allreduce(ncells, global_ncells, 1, MPI_INTEGER, MPI_SUM, &
+                       partit%MPI_COMM_FESOM, ierror)
     if (partit%mype == 0) then
       write(output_unit, '(A,I0,A,I0,A,I0)') &
         '  atlas_mesh_to_fesom_mesh: nnodes=', nnodes, ', ncells=', ncells, &
@@ -400,7 +410,7 @@ contains
     ! ------------------------------------------------------------------
     ! 2. Atlas node coordinates: lon/lat degrees -> radians
     ! ------------------------------------------------------------------
-    mesh3%nod2D = nnodes
+    mesh3%nod2D = global_nnodes
     allocate(mesh3%coord_nod2D(2, nnodes))
     call set_mesh_transform_matrix()
     node_lonlat_field = atlas_nodes%lonlat()
@@ -420,7 +430,7 @@ contains
     ! ------------------------------------------------------------------
     ! 3. Atlas cell connectivity
     ! ------------------------------------------------------------------
-    mesh3%elem2D = ncells
+    mesh3%elem2D = global_ncells
     allocate(mesh3%elem2D_nodes(3, ncells))
     atlas_cell_nodes = atlas_cells%node_connectivity()
     call atlas_cell_nodes%padded_data(cell_nodes, cell_node_cols)
@@ -456,6 +466,30 @@ contains
     call atlas_node_edges%padded_data(node_edges, node_edge_cols)
 
     atlas_edge_count = int(atlas_edges%size())
+    owned_edges = 0
+    owned_internal_edges = 0
+    do old_edge = 1, atlas_edge_count
+      if (node_global_index(edge_nodes(1, old_edge)) <= &
+          node_global_index(edge_nodes(2, old_edge))) then
+        owner_node = int(edge_nodes(1, old_edge))
+      else
+        owner_node = int(edge_nodes(2, old_edge))
+      end if
+      if (node_owned(owner_node)) then
+        owned_edges = owned_edges + 1
+        cell1 = int(edge_cells(1, old_edge))
+        cell2 = int(edge_cells(2, old_edge))
+        if (cell1 > 0 .and. cell1 <= atlas_ncells .and. &
+            cell2 > 0 .and. cell2 <= atlas_ncells) &
+          owned_internal_edges = owned_internal_edges + 1
+      end if
+    end do
+    call MPI_Allreduce(owned_edges, global_edges, 1, MPI_INTEGER, MPI_SUM, &
+                       partit%MPI_COMM_FESOM, ierror)
+    call MPI_Allreduce(owned_internal_edges, global_internal_edges, 1, &
+                       MPI_INTEGER, MPI_SUM, partit%MPI_COMM_FESOM, ierror)
+    deallocate(node_owned)
+
     allocate(edge_old_to_new(atlas_edge_count))
     edge_old_to_new = 0
     edge2D_local = 0
@@ -509,8 +543,8 @@ contains
     end do
     n_internal = edge2D_in_local
 
-    mesh3%edge2D    = edge2D_local
-    mesh3%edge2D_in = edge2D_in_local
+    mesh3%edge2D    = global_edges
+    mesh3%edge2D_in = global_internal_edges
 
     ! ------------------------------------------------------------------
     ! 6. Build elem_edges: elem_edges(q,e) = edge opposite to node q
@@ -560,13 +594,17 @@ contains
     do n = 1, edge2D_local
       partit%myList_edge2D(n) = n
     end do
-    ! CSR partition vector: size npes+1 with a balanced block distribution
+    ! CSR partition vector from the actual owned-node count on each rank.
     allocate(partit%part(partit%npes+1))
     partit%part(1) = 1
-    do n = 1, partit%npes
-      partit%part(n+1) = 1 + (n * nnodes) / partit%npes
+    call MPI_Allgather(n_owned, 1, MPI_INTEGER, partit%part(2), 1, MPI_INTEGER, &
+                       partit%MPI_COMM_FESOM, ierror)
+    do n = 2, partit%npes + 1
+      partit%part(n) = partit%part(n) + partit%part(n-1)
     end do
-    partit%part(partit%npes+1) = nnodes + 1
+    if (partit%part(partit%npes+1) /= mesh3%nod2D + 1) then
+      error stop 'Atlas node partition vector does not match global node count'
+    end if
 
     ! Empty halo communication structures (npes=1: no halo exchange)
     partit%com_nod2D%rPEnum  = 0; partit%com_nod2D%sPEnum  = 0
@@ -655,8 +693,8 @@ contains
 
     if (partit%mype == 0) then
       write(output_unit, '(A,I0,A,I0,A,I0)') &
-        '  atlas_mesh_to_fesom_mesh complete: ', nnodes, ' nodes, ', &
-        ncells, ' cells, ', edge2D_local, ' edges'
+        '  atlas_mesh_to_fesom_mesh complete: ', mesh3%nod2D, ' nodes, ', &
+        mesh3%elem2D, ' cells, ', mesh3%edge2D, ' edges'
     end if
 
   end subroutine atlas_mesh_to_fesom_mesh
