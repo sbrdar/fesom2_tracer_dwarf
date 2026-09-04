@@ -114,7 +114,7 @@ contains
     real(kind=MP), allocatable :: zbar_default(:)
     type(atlas_mesh_Nodes) :: mesh_nodes_obj
     type(atlas_mesh_Cells) :: mesh_cells_obj
-    logical :: have_dist, use_fesom_generator
+    logical :: have_dist
 
     if (.not. atlas_fesom_enabled()) then
       stop 'Atlas FESOM support not enabled'
@@ -146,34 +146,19 @@ contains
 
     grid_obj = atlas_Grid(trim(atlas_grid_name))
     write(output_unit, *) '  --> Atlas grid found: ', grid_obj%name()
-    use_fesom_generator = index(trim(grid_obj%name()), 'fesom-pi') == 1
-
     call set_fesom_dist(partit, grid_obj, dist_obj, have_dist)
 
     ! Create mesh generator and generate mesh
-    if (use_fesom_generator) then
-      meshgen_obj = atlas_MeshGenerator("fesom")
-    else
-      meshgen_config = atlas_Config()
-      call meshgen_config%set('type', 'structured')
-      call meshgen_config%set('triangulate', .true.)
-      meshgen_obj = atlas_MeshGenerator(meshgen_config)
-      call meshgen_config%final()
-    end if
+    meshgen_config = atlas_Config()
+    call meshgen_config%set('triangulate', .true.) ! no quad element support for FESOM mesh available
     if (have_dist) then
-      mesh_obj = meshgen_obj%GENERATE(grid_obj, dist_obj)
-      call dist_obj%final()
+      mesh_obj = atlas_Mesh(grid_obj, dist_obj, meshgen_config)
+      call dist_obj%FINAL()
     else
-      mesh_obj = meshgen_obj%GENERATE(grid_obj)
+      mesh_obj = atlas_Mesh(grid_obj, meshgen_config)
     end if
 
-    if (use_fesom_generator) then
-      atlas_mesh_halo = 2
-    else
-      atlas_mesh_halo = 0
-    end if
-    atlas_nodes_global = atlas_functionspace_NodeColumns(mesh_obj, &
-                                                         halo=atlas_mesh_halo)
+    atlas_nodes_global = atlas_functionspace_NodeColumns(mesh_obj, halo=2)
 
     ! Get mesh dimensions for logging
     mesh_nodes_obj = mesh_obj%nodes()
@@ -196,7 +181,7 @@ contains
     ! Store mesh for later use by compute_tracer_stats_atlas
     atlas_mesh_global = mesh_obj
     atlas_mesh_active = .true.
-    call meshgen_obj%FINAL()
+    call meshgen_config%FINAL()
     call grid_obj%FINAL()
     call mesh_obj%FINAL()
 #else
