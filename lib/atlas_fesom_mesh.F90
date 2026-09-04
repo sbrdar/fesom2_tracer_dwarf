@@ -10,7 +10,7 @@ module atlas_fesom_mesh_module
   use MOD_MESH
   use MOD_PARTIT
   use o_PARAM, only: WP, MP
-  use oce_mesh_module, only: mesh_setup, test_tri, find_levels_min_e2n, &
+  use oce_mesh_module, only: mesh_setup, test_tri, find_levels, find_levels_min_e2n, &
                               mesh_areas, mesh_auxiliary_arrays, read_vertical_grid
   use analytic_mesh_module, only: generate_analytic_mesh
   use g_config, only: force_rotation, MeshPath
@@ -623,14 +623,9 @@ contains
     ! ------------------------------------------------------------------
     ! 8. Level arrays
     ! ------------------------------------------------------------------
-    allocate(mesh3%ulevels(ncells));          mesh3%ulevels = 1
-    allocate(mesh3%nlevels(ncells))
-    allocate(mesh3%ulevels_nod2D(nnodes));    mesh3%ulevels_nod2D = 1
-    allocate(mesh3%nlevels_nod2D(nnodes))
     allocate(mesh3%bc_index_nod2D(nnodes));   mesh3%bc_index_nod2D = 0
 
-    mesh3%nlevels_nod2D = nl
-    mesh3%nlevels = nl
+    call find_levels(partit, mesh3)
 
     ! ------------------------------------------------------------------
     ! 9. elem_neighbors and nod_in_elem2D
